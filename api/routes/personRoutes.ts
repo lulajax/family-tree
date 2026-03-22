@@ -98,6 +98,28 @@ router.get('/:id/spouses', async (req: Request, res: Response, next: NextFunctio
   }
 });
 
+router.post('/:id/add-relative', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = z.object({ id: UuidSchema }).parse(req.params);
+    const bodySchema = z.object({
+      relation_type: z.enum(['father', 'mother', 'child', 'spouse', 'sibling']),
+      person: z.object({
+        name: z.string().min(1).max(100),
+        gender: z.enum(['male', 'female', 'unknown']).optional(),
+        birth_date: z.string().optional(),
+        death_date: z.string().optional(),
+        bio: z.string().max(5000).optional(),
+      }),
+    });
+    const body = bodySchema.parse(req.body);
+    const created_by = (req as Request & { user?: { id: string } }).user?.id || 'system';
+    const result = await personService.addRelative(id, body, created_by);
+    successResponse(res, result, 201);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const paramsSchema = z.object({ id: UuidSchema });

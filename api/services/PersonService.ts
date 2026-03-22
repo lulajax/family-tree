@@ -1,8 +1,21 @@
 import { randomUUID } from 'crypto';
 import { query, withTransaction } from '../config/database';
 import { CreatePersonInput, UpdatePersonInput } from '../types/schemas';
-import { Person, PersonVersion } from '../types';
+import { Person, PersonVersion, Relationship } from '../types';
 import { ConflictError, NotFoundError } from '../utils/errors';
+
+export type AddRelativeType = 'father' | 'mother' | 'child' | 'spouse' | 'sibling';
+
+export interface AddRelativeInput {
+  relation_type: AddRelativeType;
+  person: {
+    name: string;
+    gender?: 'male' | 'female' | 'unknown';
+    birth_date?: string;
+    death_date?: string;
+    bio?: string;
+  };
+}
 
 type ListFamilyMembersOptions = {
   page?: number;
@@ -154,20 +167,29 @@ export class PersonService {
         throw new NotFoundError('人员', person_id);
       }
 
-      const relationships = await client.query<{ total: string }>(
+      // 级联删除：先删除所有关联的关系及其版本记录
+      const relationships = await client.query<{ id: string }>(
         `
-          SELECT COUNT(*)::text AS total
+          SELECT id
           FROM relationships
-          WHERE is_active = TRUE
-            AND (from_person_id = $1 OR to_person_id = $1)
+          WHERE from_person_id = $1 OR to_person_id = $1
         `,
         [person_id]
       );
 
-      if (parseInt(relationships.rows[0].total, 10) > 0) {
-        throw new ConflictError('该人员存在关联关系，无法删除');
+      for (const rel of relationships.rows) {
+        await client.query('DELETE FROM relationship_versions WHERE relationship_id = $1', [rel.id]);
       }
 
+      await client.query(
+        'DELETE FROM relationships WHERE from_person_id = $1 OR to_person_id = $1',
+        [person_id]
+      );
+
+      // 删除人员的生命事件
+      await client.query('DELETE FROM life_events WHERE person_id = $1', [person_id]);
+
+      // 删除人员版本记录和人员本身
       await client.query('DELETE FROM person_versions WHERE person_id = $1', [person_id]);
       await client.query('DELETE FROM persons WHERE id = $1', [person_id]);
     });
@@ -313,6 +335,153 @@ export class PersonService {
     );
 
     return result.rows;
+  }
+
+  /**
+   * 原子操作：添加亲属。
+   * 在一个事务中创建新人员并建立所有必要的关系。
+   * 对于 sibling 类型，会自动为新人创建与所有共享父母的 parent_child 关系。
+   */
+  async addRelative(
+    existingPersonId: string,
+    input: AddRelativeInput,
+    created_by: string
+  ): Promise<{ person: Person; relationships: Relationship[] }> {
+    return withTransaction(async (client) => {
+      // 验证现有人员
+      const existingResult = await client.query<Person>(
+        'SELECT * FROM persons WHERE id = $1',
+        [existingPersonId]
+      );
+      if (existingResult.rows.length === 0) {
+        throw new NotFoundError('人员', existingPersonId);
+      }
+      const existingPerson = existingResult.rows[0];
+
+      // 创建新人员
+      const now = new Date();
+      const newPersonId = randomUUID();
+      const gender = input.person.gender ?? (
+        input.relation_type === 'father' ? 'male' :
+        input.relation_type === 'mother' ? 'female' :
+        'unknown'
+      );
+
+      const newPersonResult = await client.query<Person>(
+        `INSERT INTO persons (id, family_id, name, gender, birth_date, death_date, bio, created_at, updated_at, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *`,
+        [
+          newPersonId,
+          existingPerson.family_id,
+          input.person.name,
+          gender,
+          input.person.birth_date ? new Date(input.person.birth_date) : null,
+          input.person.death_date ? new Date(input.person.death_date) : null,
+          input.person.bio ?? null,
+          now, now, created_by,
+        ]
+      );
+      const newPerson = newPersonResult.rows[0];
+
+      // 插入人员版本
+      await this.insertVersion(client, newPerson, 1, created_by, 'initial_create');
+
+      // 创建关系
+      const createdRelationships: Relationship[] = [];
+
+      const createRel = async (
+        fromId: string,
+        toId: string,
+        type: string,
+        subtype: string | null
+      ) => {
+        const relId = randomUUID();
+        const relResult = await client.query<Relationship>(
+          `INSERT INTO relationships (id, from_person_id, to_person_id, type, subtype, is_active, created_at, updated_at, created_by)
+           VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, $8)
+           RETURNING *`,
+          [relId, fromId, toId, type, subtype, now, now, created_by]
+        );
+        createdRelationships.push(relResult.rows[0]);
+        // 版本记录
+        await client.query(
+          `INSERT INTO relationship_versions (id, relationship_id, version, from_person_id, to_person_id, type, subtype, start_date, end_date, is_active, valid_from, valid_to, changed_by)
+           VALUES ($1, $2, 1, $3, $4, $5, $6, NULL, NULL, TRUE, $7, NULL, $8)`,
+          [randomUUID(), relId, fromId, toId, type, subtype, now, created_by]
+        );
+      };
+
+      switch (input.relation_type) {
+        case 'father':
+          // 新人是 existingPerson 的父亲
+          // 验证：existingPerson 最多一个父亲
+          await this.validateParentLimit(client, existingPersonId, 'male');
+          await createRel(newPersonId, existingPersonId, 'parent_child', 'father');
+          break;
+
+        case 'mother':
+          await this.validateParentLimit(client, existingPersonId, 'female');
+          await createRel(newPersonId, existingPersonId, 'parent_child', 'mother');
+          break;
+
+        case 'child':
+          // existingPerson 是新人的父/母
+          await createRel(existingPersonId, newPersonId, 'parent_child',
+            existingPerson.gender === 'male' ? 'father' : existingPerson.gender === 'female' ? 'mother' : null);
+          break;
+
+        case 'spouse':
+          await createRel(existingPersonId, newPersonId, 'spouse', null);
+          break;
+
+        case 'sibling': {
+          // 核心：自动关联共享父母
+          const parentRels = await client.query<{ from_person_id: string; subtype: string | null }>(
+            `SELECT from_person_id, subtype FROM relationships
+             WHERE to_person_id = $1 AND type = 'parent_child' AND is_active = TRUE`,
+            [existingPersonId]
+          );
+
+          if (parentRels.rows.length === 0) {
+            // 没有父母信息，无法通过共享父母推导兄弟关系
+            throw new ConflictError(
+              '无法添加兄弟姐妹：该人员没有父母信息。请先添加父母，再添加兄弟姐妹。'
+            );
+          }
+
+          // 为新人创建与所有共享父母的 parent_child 关系
+          for (const parentRel of parentRels.rows) {
+            await createRel(parentRel.from_person_id, newPersonId, 'parent_child', parentRel.subtype);
+          }
+          break;
+        }
+      }
+
+      return { person: newPerson, relationships: createdRelationships };
+    });
+  }
+
+  private async validateParentLimit(
+    client: { query: (sql: string, values?: unknown[]) => Promise<{ rows: { count: string }[] }> },
+    childId: string,
+    parentGender: 'male' | 'female'
+  ): Promise<void> {
+    const result = await client.query(
+      `SELECT COUNT(*)::text AS count
+       FROM relationships r
+       JOIN persons p ON p.id = r.from_person_id
+       WHERE r.to_person_id = $1
+         AND r.type = 'parent_child'
+         AND r.is_active = TRUE
+         AND p.gender = $2`,
+      [childId, parentGender]
+    );
+    if (parseInt(result.rows[0].count, 10) > 0) {
+      throw new ConflictError(
+        `该人员已有${parentGender === 'male' ? '父亲' : '母亲'}，不能重复添加`
+      );
+    }
   }
 
   async personExists(person_id: string): Promise<boolean> {

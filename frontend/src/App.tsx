@@ -1,278 +1,376 @@
 import { useEffect, useState } from 'react';
-
-type EndpointKey = 'health' | 'ready' | 'live';
-
-type EndpointState = {
-  code?: number;
-  body?: string;
-  fetchedAt?: string;
-  message?: string;
-  status: 'idle' | 'loading' | 'success' | 'error';
-};
-
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
-
-const endpoints: Array<{
-  description: string;
-  key: EndpointKey;
-  path: string;
-  title: string;
-}> = [
-  {
-    key: 'health',
-    title: '/health',
-    path: '/health',
-    description: '检查 API 与 PostgreSQL 的整体连通状态。',
-  },
-  {
-    key: 'ready',
-    title: '/ready',
-    path: '/ready',
-    description: '确认服务已具备对外提供请求的条件。',
-  },
-  {
-    key: 'live',
-    title: '/live',
-    path: '/live',
-    description: '最轻量的进程存活探针。',
-  },
-];
-
-const architecture = [
-  {
-    title: 'Frontend',
-    description: 'React + Vite 的最小可运行界面，负责联调、说明和基础验证。',
-  },
-  {
-    title: 'Express API',
-    description: '统一走 PostgreSQL 链路，不再保留 Redis、NodeCache 或多级缓存逻辑。',
-  },
-  {
-    title: 'PostgreSQL',
-    description: '家族、人物、关系与版本记录的唯一持久化来源。',
-  },
-];
-
-const removed = [
-  'Redis 连接、健康检查和优雅关闭逻辑',
-  '根目录 cache 子系统与多级缓存实现',
-  'Service Worker / 离线缓存入口',
-  '数据库中的缓存表、缓存函数与物化缓存视图',
-];
-
-function stringifyPayload(body?: string): string {
-  if (!body) {
-    return '暂无返回内容';
-  }
-
-  try {
-    return JSON.stringify(JSON.parse(body), null, 2);
-  } catch {
-    return body;
-  }
-}
-
-function formatTimestamp(value?: string): string {
-  if (!value) {
-    return '未拉取';
-  }
-
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    month: '2-digit',
-    second: '2-digit',
-    day: '2-digit',
-  }).format(new Date(value));
-}
+import { useFamilyStore } from './store/familyStore';
+import { DualFamilyTree } from './components/tree/DualFamilyTree';
+import { FamilySelector } from './components/FamilySelector';
+import { PersonDetailPanel } from './components/person/PersonDetailPanel';
+import { AddRelativeDialog } from './components/person/AddRelativeDialog';
+import type { PersonNode, DualTreeResponse, DescendantNode } from './types';
 
 export default function App() {
-  const [statusMap, setStatusMap] = useState<Record<EndpointKey, EndpointState>>({
-    health: { status: 'idle' },
-    ready: { status: 'idle' },
-    live: { status: 'idle' },
-  });
+  const {
+    families,
+    currentFamilyId,
+    referencePersonId,
+    selectedPersonId,
+    dualTree,
+    isLoading,
+    error,
+    fetchFamilies,
+    fetchDualTree,
+    setCurrentFamily,
+    setReferencePerson,
+    setSelectedPerson,
+    setError,
+    deletePerson,
+    updatePerson,
+  } = useFamilyStore();
 
-  const refreshEndpoint = async (key: EndpointKey, path: string) => {
-    setStatusMap((current) => ({
-      ...current,
-      [key]: {
-        ...current[key],
-        message: undefined,
-        status: 'loading',
-      },
-    }));
+  const [addRelativeTarget, setAddRelativeTarget] = useState<PersonNode | null>(null);
 
+  useEffect(() => {
+    void fetchFamilies();
+  }, [fetchFamilies]);
+
+  // 选择家族后自动加载
+  useEffect(() => {
+    if (currentFamilyId && referencePersonId) {
+      void fetchDualTree();
+    }
+  }, [currentFamilyId, referencePersonId, fetchDualTree]);
+
+  const handlePersonClick = (person: PersonNode) => {
+    setSelectedPerson(person.id);
+  };
+
+  const handleSetReference = (personId: string) => {
+    setReferencePerson(personId);
+    setSelectedPerson(null);
+  };
+
+  const handleAddRelative = (person: PersonNode) => {
+    setAddRelativeTarget(person);
+  };
+
+  const handleDeletePerson = async (person: PersonNode) => {
+    await deletePerson(person.id);
+  };
+
+  const handleEditPerson = async (
+    person: PersonNode,
+    data: {
+      name: string;
+      gender: 'male' | 'female' | 'unknown';
+      birth_date?: string;
+      death_date?: string;
+      bio?: string;
+    }
+  ) => {
+    await updatePerson(person.id, data);
+  };
+
+  // 未选择家族 → 显示家族选择器
+  if (!currentFamilyId) {
+    return (
+      <FamilySelector
+        families={families}
+        isLoading={isLoading}
+        onSelect={(familyId, rootPersonId) => {
+          setCurrentFamily(familyId);
+          if (rootPersonId) setReferencePerson(rootPersonId);
+        }}
+      />
+    );
+  }
+
+  // 选择了家族但没有参考人 → 创建第一个成员
+  if (!referencePersonId) {
+    return (
+      <CreateFirstPersonView
+        onBack={() => setCurrentFamily('')}
+      />
+    );
+  }
+
+  const selectedNode = dualTree
+    ? findNodeInTree(dualTree, selectedPersonId)
+    : null;
+
+  return (
+    <div className="h-screen w-screen flex overflow-hidden bg-gray-100">
+      {/* 主区域：双系图谱 */}
+      <div className="flex-1 relative">
+        {/* 顶部栏 */}
+        <header className="absolute top-0 left-0 right-0 z-10 bg-white/90 backdrop-blur border-b px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => { setCurrentFamily(''); }}
+              className="text-gray-500 hover:text-gray-700 text-sm"
+            >
+              ← 家族列表
+            </button>
+            <h1 className="font-semibold text-lg">
+              {families.find((f) => f.id === currentFamilyId)?.name ?? '家族图谱'}
+            </h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-500">
+              焦点：{dualTree?.reference.name ?? '加载中...'}
+            </span>
+            {dualTree && (
+              <button
+                onClick={() => setAddRelativeTarget(dualTree.reference)}
+                className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+              >
+                + 添加亲属
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* 图谱 */}
+        {error && (
+          <div className="absolute top-16 left-4 right-4 z-10 bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+            {error}
+            <button onClick={() => setError(null)} className="ml-2 underline">关闭</button>
+          </div>
+        )}
+
+        {isLoading && !dualTree && (
+          <div className="flex items-center justify-center h-full pt-16">
+            <div className="text-gray-400">加载中...</div>
+          </div>
+        )}
+
+        {dualTree && (
+          <div className="h-full pt-14">
+            <DualFamilyTree
+              dualTree={dualTree}
+              onPersonClick={handlePersonClick}
+              onSetReference={handleSetReference}
+              onAddRelative={handleAddRelative}
+              onDelete={handleDeletePerson}
+              onEdit={handleEditPerson}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* 右侧详情面板 */}
+      {selectedNode && (
+        <aside className="w-96 bg-white border-l border-gray-200 overflow-auto">
+          <PersonDetailPanel
+            person={selectedNode}
+            referencePersonId={referencePersonId}
+            onSetReference={handleSetReference}
+            onClose={() => setSelectedPerson(null)}
+            onAddRelative={() => setAddRelativeTarget(selectedNode)}
+            onDelete={handleDeletePerson}
+            onEdit={handleEditPerson}
+          />
+        </aside>
+      )}
+
+      {/* 添加亲属对话框 */}
+      {addRelativeTarget && (
+        <AddRelativeDialog
+          targetPerson={addRelativeTarget}
+          onClose={() => setAddRelativeTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function CreateFirstPersonView({ onBack }: { onBack: () => void }) {
+  const [name, setName] = useState('');
+  const [gender, setGender] = useState<'male' | 'female' | 'unknown'>('male');
+  const [birthDate, setBirthDate] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { createFirstPerson } = useFamilyStore();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSubmitting(true);
+    setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}${path}`);
-      const body = await response.text();
-
-      setStatusMap((current) => ({
-        ...current,
-        [key]: {
-          body,
-          code: response.status,
-          fetchedAt: new Date().toISOString(),
-          status: response.ok ? 'success' : 'error',
-        },
-      }));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '请求失败';
-
-      setStatusMap((current) => ({
-        ...current,
-        [key]: {
-          code: 0,
-          fetchedAt: new Date().toISOString(),
-          message,
-          status: 'error',
-        },
-      }));
+      await createFirstPerson({
+        name: name.trim(),
+        gender,
+        birth_date: birthDate || undefined,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建失败');
+      setSubmitting(false);
     }
   };
 
-  useEffect(() => {
-    endpoints.forEach((endpoint) => {
-      void refreshEndpoint(endpoint.key, endpoint.path);
-    });
-  }, []);
-
   return (
-    <main className="min-h-screen bg-stone-950 text-stone-100">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-6 py-10 lg:px-10">
-        <section className="relative overflow-hidden rounded-[2rem] border border-amber-200/20 bg-gradient-to-br from-stone-900 via-stone-900 to-amber-950/80 px-8 py-10 shadow-2xl shadow-amber-950/20">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-300/70 to-transparent" />
-          <div className="grid gap-10 lg:grid-cols-[1.5fr_1fr]">
-            <div className="space-y-6">
-              <p className="text-sm uppercase tracking-[0.35em] text-amber-200/80">
-                Family Tree V1
-              </p>
-              <div className="space-y-4">
-                <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-stone-50 md:text-5xl">
-                  现在只保留一条清晰链路: Frontend + Express API + PostgreSQL
-                </h1>
-                <p className="max-w-2xl text-base leading-7 text-stone-300">
-                  这一版聚焦在稳定、可维护和可上线的最小架构。Redis、离线缓存、多级缓存和数据库缓存对象都已经从正式链路中移除。
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-3 text-sm text-stone-200">
-                <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-4 py-2">
-                  API Base URL: {API_BASE_URL}
-                </span>
-                <span className="rounded-full border border-amber-300/30 bg-amber-300/10 px-4 py-2">
-                  Service Worker: Disabled
-                </span>
-                <span className="rounded-full border border-sky-400/30 bg-sky-400/10 px-4 py-2">
-                  Cache Layer: Removed
-                </span>
-              </div>
-            </div>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full">
+        <h2 className="text-xl font-semibold mb-2">添加第一个成员</h2>
+        <p className="text-gray-500 text-sm mb-6">
+          这个家族还没有成员，请添加第一个人作为图谱的起始焦点。
+        </p>
 
-            <div className="rounded-[1.5rem] border border-stone-200/10 bg-black/20 p-6 backdrop-blur">
-              <p className="text-sm uppercase tracking-[0.25em] text-stone-400">Release Notes</p>
-              <ul className="mt-4 space-y-3 text-sm leading-6 text-stone-200">
-                {removed.map((item) => (
-                  <li key={item} className="flex gap-3">
-                    <span className="mt-2 h-2 w-2 rounded-full bg-amber-300" />
-                    <span>{item}</span>
-                  </li>
-                ))}
-              </ul>
+        {error && (
+          <div className="mb-4 text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              姓名 <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="请输入姓名"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              autoFocus
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">性别</label>
+            <div className="flex gap-2">
+              {([['male', '男'], ['female', '女'], ['unknown', '未知']] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setGender(v)}
+                  className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors ${
+                    gender === v
+                      ? v === 'male'
+                        ? 'bg-blue-50 border-blue-300 text-blue-700 font-medium'
+                        : v === 'female'
+                          ? 'bg-pink-50 border-pink-300 text-pink-700 font-medium'
+                          : 'bg-gray-100 border-gray-300 text-gray-700 font-medium'
+                      : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
-        </section>
 
-        <section className="mt-8 grid gap-4 md:grid-cols-3">
-          {architecture.map((item) => (
-            <article
-              key={item.title}
-              className="rounded-[1.5rem] border border-stone-800 bg-stone-900/70 p-6 shadow-lg shadow-black/20"
-            >
-              <p className="text-xs uppercase tracking-[0.3em] text-stone-500">{item.title}</p>
-              <p className="mt-4 text-base leading-7 text-stone-200">{item.description}</p>
-            </article>
-          ))}
-        </section>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">出生日期</label>
+            <input
+              type="date"
+              value={birthDate}
+              onChange={(e) => setBirthDate(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
 
-        <section className="mt-8 rounded-[2rem] border border-stone-800 bg-stone-900/70 p-6 md:p-8">
-          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-stone-500">Runtime Checks</p>
-              <h2 className="mt-3 text-2xl font-semibold text-stone-50">接口探针</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-400">
-                页面加载后会自动请求 `/health`、`/ready`、`/live`。如果本地后端还没启动，这里会直接显示失败原因，方便联调。
-              </p>
-            </div>
+          <div className="flex gap-2 pt-2">
             <button
-              className="rounded-full border border-amber-300/40 bg-amber-300/10 px-5 py-2 text-sm font-medium text-amber-100 transition hover:border-amber-200/60 hover:bg-amber-300/20"
-              onClick={() => {
-                endpoints.forEach((endpoint) => {
-                  void refreshEndpoint(endpoint.key, endpoint.path);
-                });
-              }}
               type="button"
+              onClick={onBack}
+              className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
             >
-              重新检测
+              返回
+            </button>
+            <button
+              type="submit"
+              disabled={!name.trim() || submitting}
+              className="flex-1 px-4 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
+            >
+              {submitting ? '创建中...' : '创建并开始'}
             </button>
           </div>
-
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
-            {endpoints.map((endpoint) => {
-              const state = statusMap[endpoint.key];
-              const tone =
-                state.status === 'success'
-                  ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-100'
-                  : state.status === 'error'
-                    ? 'border-rose-400/30 bg-rose-400/10 text-rose-100'
-                    : 'border-stone-700 bg-stone-950/60 text-stone-200';
-
-              return (
-                <article
-                  key={endpoint.key}
-                  className={`rounded-[1.5rem] border p-5 transition ${tone}`}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.3em] opacity-70">{endpoint.title}</p>
-                      <p className="mt-3 text-sm leading-6 opacity-90">{endpoint.description}</p>
-                    </div>
-                    <button
-                      className="rounded-full border border-current/20 px-3 py-1 text-xs font-medium"
-                      onClick={() => {
-                        void refreshEndpoint(endpoint.key, endpoint.path);
-                      }}
-                      type="button"
-                    >
-                      刷新
-                    </button>
-                  </div>
-
-                  <div className="mt-5 flex items-center justify-between text-sm">
-                    <span>
-                      状态:
-                      {' '}
-                      {state.status === 'loading'
-                        ? '加载中'
-                        : state.status === 'success'
-                          ? '正常'
-                          : state.status === 'error'
-                            ? '异常'
-                            : '未请求'}
-                    </span>
-                    <span>HTTP {state.code ?? '-'}</span>
-                  </div>
-
-                  <p className="mt-2 text-xs opacity-70">更新时间: {formatTimestamp(state.fetchedAt)}</p>
-
-                  <pre className="mt-4 overflow-x-auto rounded-2xl bg-black/25 p-4 text-xs leading-6 text-stone-100">
-                    {state.message ?? stringifyPayload(state.body)}
-                  </pre>
-                </article>
-              );
-            })}
-          </div>
-        </section>
+        </form>
       </div>
-    </main>
+    </div>
   );
+}
+
+/** 在递归后代树中查找节点 */
+function findInDescendants(descendants: DescendantNode[], personId: string): PersonNode | null {
+  for (const desc of descendants) {
+    if (desc.person.id === personId) return desc.person;
+    if (desc.spouse?.id === personId) return desc.spouse;
+    const found = findInDescendants(desc.children, personId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function findNodeInTree(tree: DualTreeResponse, personId: string | null): PersonNode | null {
+  if (!personId) return null;
+  if (tree.reference.id === personId) return tree.reference;
+
+  for (const layer of [...tree.paternal, ...tree.maternal]) {
+    if (layer.ancestor.id === personId) return layer.ancestor;
+    if (layer.spouse?.id === personId) return layer.spouse;
+    for (const cf of layer.siblings) {
+      if (cf.person.id === personId) return cf.person;
+      if (cf.spouse?.id === personId) return cf.spouse;
+      const found = findInDescendants(cf.children, personId);
+      if (found) return found;
+    }
+    // 配偶的父母
+    for (const sp of layer.spouseParents) {
+      if (sp.id === personId) return sp;
+    }
+    // 配偶的兄弟姐妹
+    for (const cf of layer.spouseSiblings) {
+      if (cf.person.id === personId) return cf.person;
+      if (cf.spouse?.id === personId) return cf.spouse;
+      const found = findInDescendants(cf.children, personId);
+      if (found) return found;
+    }
+  }
+
+  // 参考人兄弟（CollateralFamily[]）
+  for (const cf of tree.siblings) {
+    if (cf.person.id === personId) return cf.person;
+    if (cf.spouse?.id === personId) return cf.spouse;
+    const found = findInDescendants(cf.children, personId);
+    if (found) return found;
+  }
+
+  // 子女（递归后代树）
+  const childFound = findInDescendants(tree.children, personId);
+  if (childFound) return childFound;
+
+  // 配偶家族（SpouseFamily[]）
+  for (const sf of tree.spouses) {
+    if (sf.person.id === personId) return sf.person;
+    // 配偶的祖先链
+    for (const layer of sf.ancestors) {
+      if (layer.ancestor.id === personId) return layer.ancestor;
+      if (layer.spouse?.id === personId) return layer.spouse;
+      for (const cf of layer.siblings) {
+        if (cf.person.id === personId) return cf.person;
+        if (cf.spouse?.id === personId) return cf.spouse;
+        const found = findInDescendants(cf.children, personId);
+        if (found) return found;
+      }
+      for (const sp of layer.spouseParents) {
+        if (sp.id === personId) return sp;
+      }
+      for (const cf of layer.spouseSiblings) {
+        if (cf.person.id === personId) return cf.person;
+        if (cf.spouse?.id === personId) return cf.spouse;
+        const found = findInDescendants(cf.children, personId);
+        if (found) return found;
+      }
+    }
+    // 配偶的兄弟姐妹
+    for (const sibCf of sf.siblings) {
+      if (sibCf.person.id === personId) return sibCf.person;
+      if (sibCf.spouse?.id === personId) return sibCf.spouse;
+      const found = findInDescendants(sibCf.children, personId);
+      if (found) return found;
+    }
+  }
+
+  return null;
 }

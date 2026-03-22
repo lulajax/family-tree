@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { familyService } from '../services';
+import { familyService, dualTreeService } from '../services';
 import { validateBody, validateParams } from '../middleware';
 import { successResponse, sendNotFoundError } from '../utils/response';
 import { CreateFamilySchema, UpdateFamilySchema, UuidSchema } from '../types/schemas';
@@ -107,6 +107,21 @@ router.get('/:id/tree', async (req: Request, res: Response, next: NextFunction) 
       return;
     }
 
+    successResponse(res, tree);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/:id/dual-tree', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = z.object({ id: UuidSchema }).parse(req.params);
+    const querySchema = z.object({
+      reference: UuidSchema,
+      depth: z.coerce.number().int().min(1).max(10).default(5),
+    });
+    const { reference, depth } = querySchema.parse(req.query);
+    const tree = await dualTreeService.buildDualTree(id, reference, depth);
     successResponse(res, tree);
   } catch (error) {
     next(error);

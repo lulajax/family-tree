@@ -99,6 +99,15 @@ CREATE INDEX IF NOT EXISTS idx_relationships_type ON relationships(type);
 CREATE INDEX IF NOT EXISTS idx_relationship_versions_relationship_id ON relationship_versions(relationship_id);
 CREATE INDEX IF NOT EXISTS idx_life_events_person_id ON life_events(person_id);
 
+-- 防止重复的活跃关系
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_relationship
+  ON relationships (from_person_id, to_person_id, type)
+  WHERE is_active = TRUE;
+
+-- 复合索引：加速按人员+类型查询关系
+CREATE INDEX IF NOT EXISTS idx_relationships_from_type ON relationships(from_person_id, type) WHERE is_active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_relationships_to_type ON relationships(to_person_id, type) WHERE is_active = TRUE;
+
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN

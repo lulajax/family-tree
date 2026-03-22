@@ -1,337 +1,224 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Person, Family, ViewMode, Gender } from '../types';
+import type { Family, Person, DualTreeResponse, ApiResponse } from '../types';
+
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
 
 interface FamilyState {
   // 数据
   families: Family[];
-  persons: Person[];
   currentFamilyId: string | null;
   referencePersonId: string | null;
   selectedPersonId: string | null;
-  
-  // UI状态
-  viewMode: ViewMode;
+  dualTree: DualTreeResponse | null;
+
+  // UI
   isLoading: boolean;
   error: string | null;
-  searchQuery: string;
-  
+
   // 动作
-  setFamilies: (families: Family[]) => void;
-  setPersons: (persons: Person[]) => void;
   setCurrentFamily: (familyId: string) => void;
   setReferencePerson: (personId: string) => void;
   setSelectedPerson: (personId: string | null) => void;
-  setViewMode: (mode: ViewMode) => void;
-  setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
-  setSearchQuery: (query: string) => void;
-  
+
   // 数据获取
-  fetchFamilyData: (familyId: string) => Promise<void>;
-  
-  // 工具方法
-  getPersonById: (id: string) => Person | undefined;
-  getPersonsByFamily: (familyId: string) => Person[];
-  getAncestors: (personId: string, generations?: number) => Person[];
-  getDescendants: (personId: string, generations?: number) => Person[];
-  getSiblings: (personId: string) => Person[];
-  getSpouses: (personId: string) => Person[];
-  searchPersons: (query: string) => Person[];
-  getPersonMap: () => Map<string, Person>;
+  fetchFamilies: () => Promise<void>;
+  fetchDualTree: () => Promise<void>;
+  createFamily: (name: string, description?: string) => Promise<Family>;
+  addRelative: (
+    personId: string,
+    relationType: string,
+    person: { name: string; gender?: string; birth_date?: string; death_date?: string }
+  ) => Promise<void>;
+  createFirstPerson: (
+    person: { name: string; gender?: string; birth_date?: string; death_date?: string }
+  ) => Promise<void>;
+  deletePerson: (personId: string) => Promise<void>;
+  updatePerson: (
+    personId: string,
+    data: {
+      name?: string;
+      gender?: 'male' | 'female' | 'unknown';
+      birth_date?: string;
+      death_date?: string;
+      bio?: string;
+    }
+  ) => Promise<void>;
 }
-
-// 模拟数据生成
-const generateMockPersons = (familyId: string): Person[] => {
-  const persons: Person[] = [
-    {
-      id: 'p1',
-      name: '张伟',
-      gender: Gender.MALE,
-      birthDate: '1950-01-15',
-      generation: 1,
-      childrenIds: ['p3'],
-    },
-    {
-      id: 'p2',
-      name: '李芳',
-      gender: Gender.FEMALE,
-      birthDate: '1952-03-20',
-      generation: 1,
-      spouseIds: ['p1'],
-      childrenIds: ['p3'],
-    },
-    {
-      id: 'p3',
-      name: '张强',
-      gender: Gender.MALE,
-      birthDate: '1975-06-10',
-      generation: 2,
-      fatherId: 'p1',
-      motherId: 'p2',
-      spouseIds: ['p4'],
-      childrenIds: ['p5', 'p6'],
-    },
-    {
-      id: 'p4',
-      name: '王美',
-      gender: Gender.FEMALE,
-      birthDate: '1978-09-05',
-      generation: 2,
-      spouseIds: ['p3'],
-      childrenIds: ['p5', 'p6'],
-    },
-    {
-      id: 'p5',
-      name: '张小明',
-      gender: Gender.MALE,
-      birthDate: '2000-12-25',
-      generation: 3,
-      fatherId: 'p3',
-      motherId: 'p4',
-      isReference: true,
-    },
-    {
-      id: 'p6',
-      name: '张小红',
-      gender: Gender.FEMALE,
-      birthDate: '2003-04-18',
-      generation: 3,
-      fatherId: 'p3',
-      motherId: 'p4',
-    },
-    // 父系祖先
-    {
-      id: 'p7',
-      name: '张爷爷',
-      gender: Gender.MALE,
-      birthDate: '1920-05-01',
-      deathDate: '1995-08-15',
-      generation: 0,
-      childrenIds: ['p1', 'p8'],
-    },
-    {
-      id: 'p8',
-      name: '张叔叔',
-      gender: Gender.MALE,
-      birthDate: '1955-07-20',
-      generation: 1,
-      fatherId: 'p7',
-    },
-    // 母系祖先
-    {
-      id: 'p9',
-      name: '王外公',
-      gender: Gender.MALE,
-      birthDate: '1930-02-10',
-      generation: 0,
-      childrenIds: ['p4', 'p10'],
-    },
-    {
-      id: 'p10',
-      name: '王姨妈',
-      gender: Gender.FEMALE,
-      birthDate: '1980-11-30',
-      generation: 2,
-      fatherId: 'p9',
-    },
-  ];
-  
-  return persons;
-};
-
-const mockFamilies: Family[] = [
-  {
-    id: 'f1',
-    name: '张氏家族',
-    description: '张氏大家族族谱',
-    rootPersonId: 'p5',
-    createdAt: '2024-01-01',
-    updatedAt: '2024-01-01',
-    memberCount: 10,
-  },
-];
 
 export const useFamilyStore = create<FamilyState>()(
   persist(
     (set, get) => ({
-      // 初始状态
-      families: mockFamilies,
-      persons: generateMockPersons('f1'),
-      currentFamilyId: 'f1',
-      referencePersonId: 'p5',
+      families: [],
+      currentFamilyId: null,
+      referencePersonId: null,
       selectedPersonId: null,
-      viewMode: ViewMode.DESKTOP_DUAL,
+      dualTree: null,
       isLoading: false,
       error: null,
-      searchQuery: '',
 
-      // 设置方法
-      setFamilies: (families) => set({ families }),
-      setPersons: (persons) => set({ persons }),
-      setCurrentFamily: (familyId) => set({ currentFamilyId: familyId }),
-      setReferencePerson: (personId) => set({ referencePersonId: personId }),
+      setCurrentFamily: (familyId) => {
+        set({ currentFamilyId: familyId, referencePersonId: null, dualTree: null });
+      },
+
+      setReferencePerson: (personId) => {
+        set({ referencePersonId: personId });
+        // 自动刷新树
+        void get().fetchDualTree();
+      },
+
       setSelectedPerson: (personId) => set({ selectedPersonId: personId }),
-      setViewMode: (mode) => set({ viewMode: mode }),
-      setLoading: (loading) => set({ isLoading: loading }),
       setError: (error) => set({ error }),
-      setSearchQuery: (query) => set({ searchQuery: query }),
 
-      // 数据获取
-      fetchFamilyData: async (familyId: string) => {
+      fetchFamilies: async () => {
         set({ isLoading: true, error: null });
         try {
-          // 模拟API调用
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          const persons = generateMockPersons(familyId);
-          const family = mockFamilies.find(f => f.id === familyId);
-          
-          if (family) {
-            set({
-              persons,
-              currentFamilyId: familyId,
-              referencePersonId: family.rootPersonId,
-              isLoading: false,
-            });
+          const res = await fetch(`${API_BASE}/families`);
+          const json: ApiResponse<Family[]> = await res.json();
+          if (json.success && json.data) {
+            set({ families: json.data, isLoading: false });
           } else {
-            set({ error: '家族不存在', isLoading: false });
+            set({ error: json.error?.message ?? '加载家族列表失败', isLoading: false });
           }
         } catch (err) {
-          set({ error: '加载数据失败', isLoading: false });
+          set({ error: err instanceof Error ? err.message : '网络错误', isLoading: false });
         }
       },
 
-      // 工具方法
-      getPersonById: (id: string) => {
-        return get().persons.find(p => p.id === id);
-      },
+      fetchDualTree: async () => {
+        const { currentFamilyId, referencePersonId } = get();
+        if (!currentFamilyId || !referencePersonId) return;
 
-      getPersonsByFamily: (familyId: string) => {
-        return get().persons;
-      },
-
-      getAncestors: (personId: string, generations: number = 5): Person[] => {
-        const person = get().getPersonById(personId);
-        if (!person) return [];
-
-        const ancestors: Person[] = [];
-        const queue: { id: string; gen: number }[] = [
-          { id: person.fatherId || '', gen: 1 },
-          { id: person.motherId || '', gen: 1 },
-        ].filter(item => item.id);
-
-        const visited = new Set<string>();
-
-        while (queue.length > 0) {
-          const { id, gen } = queue.shift()!;
-          if (visited.has(id) || gen > generations) continue;
-          visited.add(id);
-
-          const ancestor = get().getPersonById(id);
-          if (ancestor) {
-            ancestors.push(ancestor);
-            if (ancestor.fatherId) {
-              queue.push({ id: ancestor.fatherId, gen: gen + 1 });
-            }
-            if (ancestor.motherId) {
-              queue.push({ id: ancestor.motherId, gen: gen + 1 });
-            }
+        set({ isLoading: true, error: null });
+        try {
+          const res = await fetch(
+            `${API_BASE}/families/${currentFamilyId}/dual-tree?reference=${referencePersonId}`
+          );
+          const json: ApiResponse<DualTreeResponse> = await res.json();
+          if (json.success && json.data) {
+            set({ dualTree: json.data, isLoading: false });
+          } else {
+            set({ error: json.error?.message ?? '加载图谱失败', isLoading: false });
           }
+        } catch (err) {
+          set({ error: err instanceof Error ? err.message : '网络错误', isLoading: false });
         }
-
-        return ancestors;
       },
 
-      getDescendants: (personId: string, generations: number = 5): Person[] => {
-        const person = get().getPersonById(personId);
-        if (!person || !person.childrenIds) return [];
+      createFamily: async (name, description) => {
+        const res = await fetch(`${API_BASE}/families`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, description }),
+        });
+        const json: ApiResponse<Family> = await res.json();
+        if (!json.success || !json.data) {
+          throw new Error(json.error?.message ?? '创建家族失败');
+        }
+        const family = json.data;
+        set((s) => ({ families: [...s.families, family] }));
+        return family;
+      },
 
-        const descendants: Person[] = [];
-        const queue: { id: string; gen: number }[] = person.childrenIds.map(id => ({
-          id,
-          gen: 1,
+      createFirstPerson: async (person) => {
+        const { currentFamilyId } = get();
+        if (!currentFamilyId) throw new Error('未选择家族');
+
+        // 1. 创建人员
+        const createRes = await fetch(`${API_BASE}/persons`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ family_id: currentFamilyId, ...person }),
+        });
+        const createJson: ApiResponse<Person> = await createRes.json();
+        if (!createJson.success || !createJson.data) {
+          throw new Error(createJson.error?.message ?? '创建人员失败');
+        }
+        const newPerson = createJson.data;
+
+        // 2. 设为家族根节点
+        const rootRes = await fetch(`${API_BASE}/families/${currentFamilyId}/root`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ person_id: newPerson.id }),
+        });
+        const rootJson: ApiResponse<Family> = await rootRes.json();
+        if (!rootJson.success) {
+          throw new Error(rootJson.error?.message ?? '设置根节点失败');
+        }
+
+        // 3. 更新本地家族列表中的 root_person_id
+        set((s) => ({
+          families: s.families.map((f) =>
+            f.id === currentFamilyId ? { ...f, root_person_id: newPerson.id } : f
+          ),
+          referencePersonId: newPerson.id,
         }));
 
-        const visited = new Set<string>();
+        // 4. 加载图谱
+        await get().fetchDualTree();
+      },
 
-        while (queue.length > 0) {
-          const { id, gen } = queue.shift()!;
-          if (visited.has(id) || gen > generations) continue;
-          visited.add(id);
+      addRelative: async (personId, relationType, person) => {
+        const res = await fetch(`${API_BASE}/persons/${personId}/add-relative`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ relation_type: relationType, person }),
+        });
+        const json: ApiResponse<unknown> = await res.json();
+        if (!json.success) {
+          throw new Error(json.error?.message ?? '添加亲属失败');
+        }
+        // 刷新图谱
+        await get().fetchDualTree();
+      },
 
-          const descendant = get().getPersonById(id);
-          if (descendant) {
-            descendants.push(descendant);
-            if (descendant.childrenIds) {
-              for (const childId of descendant.childrenIds) {
-                queue.push({ id: childId, gen: gen + 1 });
-              }
-            }
+      updatePerson: async (personId, data) => {
+        const res = await fetch(`${API_BASE}/persons/${personId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        const json: ApiResponse<Person> = await res.json();
+        if (!json.success) {
+          throw new Error(json.error?.message ?? '更新人物信息失败');
+        }
+        // 刷新图谱
+        await get().fetchDualTree();
+      },
+
+      deletePerson: async (personId) => {
+        const { referencePersonId, dualTree } = get();
+        const res = await fetch(`${API_BASE}/persons/${personId}`, {
+          method: 'DELETE',
+        });
+        if (!res.ok) {
+          const json: ApiResponse<unknown> = await res.json().catch(() => ({ success: false, error: { message: '删除失败' } }));
+          throw new Error(json.error?.message ?? '删除人物失败');
+        }
+
+        // 如果被删除的是当前选中人物，清空选中状态
+        set((s) => ({ selectedPersonId: s.selectedPersonId === personId ? null : s.selectedPersonId }));
+
+        // 如果被删除的是当前焦点人物，需要切换到其他人物
+        if (referencePersonId === personId && dualTree) {
+          // 尝试切换到配偶、父母或子女
+          const nextRef = dualTree.spouses[0]?.person
+            ?? dualTree.paternal[0]?.ancestor
+            ?? dualTree.maternal[0]?.ancestor
+            ?? dualTree.children[0]?.person
+            ?? null;
+          if (nextRef) {
+            set({ referencePersonId: nextRef.id });
+          } else {
+            // 没有可用的人物了，清空焦点
+            set({ referencePersonId: null, dualTree: null });
           }
         }
 
-        return descendants;
-      },
-
-      getSiblings: (personId: string): Person[] => {
-        const person = get().getPersonById(personId);
-        if (!person) return [];
-
-        const siblings: Person[] = [];
-        
-        // 通过父亲找兄弟姐妹
-        if (person.fatherId) {
-          const father = get().getPersonById(person.fatherId);
-          if (father?.childrenIds) {
-            for (const siblingId of father.childrenIds) {
-              if (siblingId !== personId) {
-                const sibling = get().getPersonById(siblingId);
-                if (sibling) siblings.push(sibling);
-              }
-            }
-          }
-        }
-
-        // 通过母亲找兄弟姐妹
-        if (person.motherId) {
-          const mother = get().getPersonById(person.motherId);
-          if (mother?.childrenIds) {
-            for (const siblingId of mother.childrenIds) {
-              if (siblingId !== personId && !siblings.find(s => s.id === siblingId)) {
-                const sibling = get().getPersonById(siblingId);
-                if (sibling) siblings.push(sibling);
-              }
-            }
-          }
-        }
-
-        return siblings;
-      },
-
-      getSpouses: (personId: string): Person[] => {
-        const person = get().getPersonById(personId);
-        if (!person?.spouseIds) return [];
-
-        return person.spouseIds
-          .map(id => get().getPersonById(id))
-          .filter((p): p is Person => p !== undefined);
-      },
-
-      searchPersons: (query: string): Person[] => {
-        if (!query.trim()) return [];
-        
-        const lowerQuery = query.toLowerCase();
-        return get().persons.filter(p => 
-          p.name.toLowerCase().includes(lowerQuery) ||
-          p.generation.toString().includes(lowerQuery)
-        );
-      },
-
-      getPersonMap: (): Map<string, Person> => {
-        const map = new Map<string, Person>();
-        get().persons.forEach(p => map.set(p.id, p));
-        return map;
+        // 刷新图谱
+        await get().fetchDualTree();
       },
     }),
     {

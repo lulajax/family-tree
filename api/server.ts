@@ -2,6 +2,9 @@
  * Express server entrypoint.
  */
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 import compression from 'compression';
 import cors from 'cors';
 import express, { Application, Request, Response } from 'express';

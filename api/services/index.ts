@@ -6,3 +6,4 @@ export { SideCalculationService, sideCalculationService } from './SideCalculatio
 export { TitleCalculationService, titleCalculationService } from './TitleCalculationService';
 export { SearchService, searchService } from './SearchService';
 export { ImportService, importService } from './ImportService';
+export { DualTreeService, dualTreeService } from './DualTreeService';
