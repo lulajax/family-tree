@@ -19,6 +19,7 @@ export function FamilyDashboard() {
   const isMobile = !useMediaQuery('(min-width: 768px)');
 
   const [referencePersonId, setReferencePersonId] = useState<string | null>(null);
+  const [refHistory, setRefHistory] = useState<string[]>([]);
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const [addRelativeTarget, setAddRelativeTarget] = useState<PersonNode | null>(null);
 
@@ -34,7 +35,20 @@ export function FamilyDashboard() {
     : null;
 
   const handleSetReference = useCallback((personId: string) => {
+    if (effectiveRefId) {
+      setRefHistory(prev => [...prev, effectiveRefId]);
+    }
     setReferencePersonId(personId);
+    setSelectedPersonId(null);
+  }, [effectiveRefId]);
+
+  const handleBack = useCallback(() => {
+    setRefHistory(prev => {
+      const next = [...prev];
+      const last = next.pop();
+      if (last) setReferencePersonId(last);
+      return next;
+    });
     setSelectedPersonId(null);
   }, []);
 
@@ -50,6 +64,18 @@ export function FamilyDashboard() {
     await apiClient(`/persons/${personId}/add-relative`, {
       method: 'POST',
       body: JSON.stringify({ relation_type: relationType, person: personData }),
+    });
+    queryClient.invalidateQueries({ queryKey: ['dualTree'] });
+  }, [queryClient]);
+
+  const handleLinkExisting = useCallback(async (
+    personId: string,
+    relationType: string,
+    existingPersonId: string,
+  ) => {
+    await apiClient(`/persons/${personId}/link-relative`, {
+      method: 'POST',
+      body: JSON.stringify({ relation_type: relationType, existing_person_id: existingPersonId }),
     });
     queryClient.invalidateQueries({ queryKey: ['dualTree'] });
   }, [queryClient]);
@@ -146,8 +172,10 @@ export function FamilyDashboard() {
         {addRelativeTarget && (
           <AddRelativeDialog
             person={addRelativeTarget}
+            familyId={familyId}
             onClose={() => setAddRelativeTarget(null)}
             onSubmit={handleAddRelativeSubmit}
+            onLinkExisting={handleLinkExisting}
           />
         )}
       </div>
@@ -159,12 +187,20 @@ export function FamilyDashboard() {
     <div className="flex h-[calc(100vh-3.5rem)]">
       {/* Tree area */}
       <div className="flex-1 relative overflow-hidden">
-        {/* Family header */}
-        {family && (
-          <div className="absolute top-4 left-4 z-10">
-            <FamilyHeader family={family} />
-          </div>
-        )}
+        {/* Family header + back button */}
+        <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
+          {refHistory.length > 0 && (
+            <button
+              onClick={handleBack}
+              className="flex items-center gap-1 px-3 py-1.5 bg-white/90 backdrop-blur border border-gray-200 rounded-lg shadow-sm text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+              title="返回上一个焦点"
+            >
+              <span>←</span>
+              <span>返回</span>
+            </button>
+          )}
+          {family && <FamilyHeader family={family} />}
+        </div>
 
         {isLoading && (
           <div className="flex items-center justify-center h-full">
@@ -308,6 +344,9 @@ function findInDescendants(descendants: DescendantNode[], personId: string): Per
     if (desc.person.id === personId) return desc.person;
     const sp = findInSpouses(desc.spouses, personId);
     if (sp) return sp;
+    // 搜索亲家（配偶的父母）
+    const spParent = desc.spouseParents?.find(p => p.id === personId);
+    if (spParent) return spParent;
     const found = findInDescendants(desc.children, personId);
     if (found) return found;
   }

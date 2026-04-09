@@ -15,11 +15,13 @@ export interface PersonNode {
   native_place: string | null;
   title: string;
   side: Side;
+  isFormerSpouse?: boolean;
 }
 
 export interface DescendantNode {
   person: PersonNode;
   spouses: PersonNode[];
+  spouseParents: PersonNode[];
   children: DescendantNode[];
 }
 
@@ -72,6 +74,7 @@ interface RelRow {
   type: string;
   subtype: string | null;
   start_date: Date | null;
+  is_active: boolean;
 }
 
 /**
@@ -98,10 +101,10 @@ export class DualTreeService {
         [familyId]
       ),
       query<RelRow>(
-        `SELECT r.from_person_id, r.to_person_id, r.type, r.subtype, r.start_date
+        `SELECT r.from_person_id, r.to_person_id, r.type, r.subtype, r.start_date, r.is_active
          FROM relationships r
          JOIN persons p ON p.id = r.from_person_id
-         WHERE p.family_id = $1 AND r.is_active = TRUE`,
+         WHERE p.family_id = $1 AND (r.is_active = TRUE OR r.type = 'spouse')`,
         [familyId]
       ),
     ]);
@@ -115,6 +118,7 @@ export class DualTreeService {
     const parentsMap = new Map<string, PersonRow[]>();
     const childrenMap = new Map<string, PersonRow[]>();
     const spouseMap = new Map<string, PersonRow[]>();
+    const formerSpouseMap = new Map<string, PersonRow[]>();   // 前配偶
 
     for (const r of relsResult.rows) {
       if (r.type === 'parent_child') {
@@ -128,8 +132,13 @@ export class DualTreeService {
         const a = personMap.get(r.from_person_id);
         const b = personMap.get(r.to_person_id);
         if (a && b) {
-          pushToUnique(spouseMap, r.from_person_id, b);
-          pushToUnique(spouseMap, r.to_person_id, a);
+          if (r.is_active) {
+            pushToUnique(spouseMap, r.from_person_id, b);
+            pushToUnique(spouseMap, r.to_person_id, a);
+          } else {
+            pushToUnique(formerSpouseMap, r.from_person_id, b);
+            pushToUnique(formerSpouseMap, r.to_person_id, a);
+          }
         }
       }
     }
@@ -176,10 +185,10 @@ export class DualTreeService {
 
     // ── 4. 递归构建祖先链 ──
     const paternalChain = father
-      ? this.buildAncestorChain(father, 1, maxDepth, parentsMap, childrenMap, spouseMap, personMap, 'paternal', ref)
+      ? this.buildAncestorChain(father, 1, maxDepth, parentsMap, childrenMap, spouseMap, personMap, 'paternal', ref, false, formerSpouseMap)
       : [];
     const maternalChain = mother
-      ? this.buildAncestorChain(mother, 1, maxDepth, parentsMap, childrenMap, spouseMap, personMap, 'maternal', ref)
+      ? this.buildAncestorChain(mother, 1, maxDepth, parentsMap, childrenMap, spouseMap, personMap, 'maternal', ref, false, formerSpouseMap)
       : [];
 
     // ── 5. 参考人的兄弟姐妹 ──
@@ -196,7 +205,7 @@ export class DualTreeService {
     for (const sibId of siblingSet) {
       const sib = personMap.get(sibId);
       if (sib) {
-        siblingsResult.push(this.buildCollateralFamily(sib, ref, 0, 'paternal', spouseMap, childrenMap, personMap));
+        siblingsResult.push(this.buildCollateralFamily(sib, ref, 0, 'paternal', spouseMap, childrenMap, personMap, formerSpouseMap));
       }
     }
     siblingsResult.sort((a, b) => sortByBirthOrder(personMap.get(a.person.id), personMap.get(b.person.id)));
@@ -205,15 +214,25 @@ export class DualTreeService {
     const refChildren = childrenMap.get(referencePersonId) ?? [];
     const sortedChildren = [...refChildren].sort(sortByBirthOrder);
     const visited = new Set<string>([referencePersonId]);
-    const childrenResult: DescendantNode[] = sortedChildren.map((c) =>
-      this.buildDescendantTree(c, ref, 1, 'paternal', 10, spouseMap, childrenMap, personMap, visited)
-    );
+    const childrenResult: DescendantNode[] = sortedChildren.map((c) => {
+      // 通过儿子的后代 = paternal（孙子），通过女儿的后代 = maternal（外孙）
+      const childSide = c.gender === 'female' ? 'maternal' : 'paternal';
+      return this.buildDescendantTree(c, ref, 1, childSide as Side, 10, parentsMap, spouseMap, childrenMap, personMap, visited, formerSpouseMap);
+    });
 
-    // ── 7. 参考人的配偶 ──
+    // ── 7. 参考人的配偶（含前配偶） ──
     const refSpouses = spouseMap.get(referencePersonId) ?? [];
+    const refFormerSpouses = formerSpouseMap.get(referencePersonId) ?? [];
     const spousesResult: SpouseFamily[] = refSpouses.map((s) =>
       this.buildSpouseFamily(s, ref, parentsMap, childrenMap, spouseMap, personMap)
     );
+    // 前配偶也构建家族树，标记 isFormerSpouse
+    for (const fs of refFormerSpouses) {
+      if (refSpouses.some(s => s.id === fs.id)) continue; // 跳过已在现配中的
+      const sf = this.buildSpouseFamily(fs, ref, parentsMap, childrenMap, spouseMap, personMap);
+      sf.person.isFormerSpouse = true;
+      spousesResult.push(sf);
+    }
 
     return {
       reference: toNode(ref, '本人', 'paternal'),
@@ -233,14 +252,17 @@ export class DualTreeService {
     generation: number,
     side: Side,
     maxDescendantDepth: number,
+    parentsMap: Map<string, PersonRow[]>,
     spouseMap: Map<string, PersonRow[]>,
     childrenMap: Map<string, PersonRow[]>,
     personMap: Map<string, PersonRow>,
     visited: Set<string>,
+    formerSpouseMap?: Map<string, PersonRow[]>,
   ): DescendantNode {
     visited.add(person.id);
 
     const allSpouses = spouseMap.get(person.id) ?? [];
+    const formerSpouses = formerSpouseMap?.get(person.id) ?? [];
     const descendantPath = buildDescendantPath(generation);
     const spousePath = descendantPath + '>spouse';
 
@@ -248,6 +270,22 @@ export class DualTreeService {
     const spouseNodes = allSpouses.map(sp =>
       toNode(sp, matchTitleWithFallback(spousePath, sp.gender, side, null, ref.gender), 'affinity')
     );
+    // 前配偶
+    const formerSpouseNodes = formerSpouses
+      .filter(fs => !allSpouses.some(s => s.id === fs.id))
+      .map(sp =>
+        toNode(sp, '前' + matchTitleWithFallback(spousePath, sp.gender, side, null, ref.gender), 'affinity', true)
+      );
+
+    // 查询配偶的父母（亲家）
+    const spouseParentNodes: PersonNode[] = [];
+    for (const sp of allSpouses) {
+      const spParents = parentsMap.get(sp.id) ?? [];
+      for (const p of spParents) {
+        const parentTitle = p.gender === 'male' ? '亲家公' : '亲家母';
+        spouseParentNodes.push(toNode(p, parentTitle, 'affinity'));
+      }
+    }
 
     let childDescendants: DescendantNode[] = [];
     if (generation < maxDescendantDepth) {
@@ -256,13 +294,14 @@ export class DualTreeService {
       childDescendants = sortedKids
         .filter((k) => !visited.has(k.id))
         .map((k) =>
-          this.buildDescendantTree(k, ref, generation + 1, side, maxDescendantDepth, spouseMap, childrenMap, personMap, visited)
+          this.buildDescendantTree(k, ref, generation + 1, side, maxDescendantDepth, parentsMap, spouseMap, childrenMap, personMap, visited, formerSpouseMap)
         );
     }
 
     return {
       person: toNode(person, title, side),
-      spouses: spouseNodes,
+      spouses: [...spouseNodes, ...formerSpouseNodes],
+      spouseParents: spouseParentNodes,
       children: childDescendants,
     };
   }
@@ -279,11 +318,16 @@ export class DualTreeService {
     personMap: Map<string, PersonRow>,
     visited: Set<string>,
     title: string,
+    formerSpouseMap?: Map<string, PersonRow[]>,
   ): DescendantNode {
     visited.add(person.id);
 
     const allSpouses = spouseMap.get(person.id) ?? [];
+    const formerSpouses = formerSpouseMap?.get(person.id) ?? [];
     const spouseNodes = allSpouses.map(sp => toNode(sp, '配偶', side));
+    const formerSpouseNodes = formerSpouses
+      .filter(fs => !allSpouses.some(s => s.id === fs.id))
+      .map(sp => toNode(sp, '前配偶', side, true));
 
     let childDescendants: DescendantNode[] = [];
     if (generation < maxDepth) {
@@ -293,13 +337,14 @@ export class DualTreeService {
         .filter((k) => !visited.has(k.id))
         .map((k) => {
           const childTitle = k.gender === 'male' ? '子' : k.gender === 'female' ? '女' : '子女';
-          return this.buildCollateralDescendantTree(k, generation + 1, side, maxDepth, spouseMap, childrenMap, personMap, visited, childTitle);
+          return this.buildCollateralDescendantTree(k, generation + 1, side, maxDepth, spouseMap, childrenMap, personMap, visited, childTitle, formerSpouseMap);
         });
     }
 
     return {
       person: toNode(person, title, side),
-      spouses: spouseNodes,
+      spouses: [...spouseNodes, ...formerSpouseNodes],
+      spouseParents: [],
       children: childDescendants,
     };
   }
@@ -314,6 +359,7 @@ export class DualTreeService {
     spouseMap: Map<string, PersonRow[]>,
     childrenMap: Map<string, PersonRow[]>,
     personMap: Map<string, PersonRow>,
+    formerSpouseMap?: Map<string, PersonRow[]>,
   ): CollateralFamily {
     // 路径：ancestorGen=0 → 'sibling'，ancestorGen=1 → 'parent>sibling'，etc.
     const pathStr = ancestorGeneration === 0
@@ -324,10 +370,14 @@ export class DualTreeService {
     const title = matchTitleWithFallback(pathStr, sib.gender, side, elder, ref.gender);
 
     const allSibSpouses = spouseMap.get(sib.id) ?? [];
+    const formerSpouses = formerSpouseMap?.get(sib.id) ?? [];
     const spousePathStr = pathStr + '>spouse';
     const spouseNodes = allSibSpouses.map(sp =>
       toNode(sp, matchTitleWithFallback(spousePathStr, sp.gender, side, elder, ref.gender), side)
     );
+    const formerSpouseNodes = formerSpouses
+      .filter(fs => !allSibSpouses.some(s => s.id === fs.id))
+      .map(sp => toNode(sp, '前' + matchTitleWithFallback(spousePathStr, sp.gender, side, elder, ref.gender), side, true));
 
     const sibChildren = childrenMap.get(sib.id) ?? [];
     const sortedSibChildren = [...sibChildren].sort(sortByBirthOrder);
@@ -336,13 +386,14 @@ export class DualTreeService {
     const childDescendants: DescendantNode[] = sortedSibChildren
       .filter((c) => !visited.has(c.id))
       .map((c) => {
-        const childTitle = matchTitleWithFallback(childPathStr, c.gender, side, null, ref.gender);
-        return this.buildCollateralDescendantTree(c, 1, side, 10, spouseMap, childrenMap, personMap, visited, childTitle);
+        const childRefGender = childPathStr === 'sibling>child' ? sib.gender : ref.gender;
+        const childTitle = matchTitleWithFallback(childPathStr, c.gender, side, null, childRefGender);
+        return this.buildCollateralDescendantTree(c, 1, side, 10, spouseMap, childrenMap, personMap, visited, childTitle, formerSpouseMap);
       });
 
     return {
       person: toNode(sib, title, side),
-      spouses: spouseNodes,
+      spouses: [...spouseNodes, ...formerSpouseNodes],
       children: childDescendants,
     };
   }
@@ -391,7 +442,10 @@ export class DualTreeService {
         const sibVisited = new Set<string>([sib.id]);
         const sibChildDescendants: DescendantNode[] = sibChildren
           .filter((c) => !sibVisited.has(c.id))
-          .map((c) => this.buildCollateralDescendantTree(c, 1, 'affinity', 10, spouseMap, childrenMap, personMap, sibVisited, '子女'));
+          .map((c) => {
+            const childTitle = matchTitleWithFallback('spouse>sibling>child', c.gender, null, null, ref.gender);
+            return this.buildCollateralDescendantTree(c, 1, 'affinity', 10, spouseMap, childrenMap, personMap, sibVisited, childTitle);
+          });
         siblingFamilies.push({
           person: toNode(sib, sibTitle, 'affinity'),
           spouses: sibSpouseNodes,
@@ -420,6 +474,7 @@ export class DualTreeService {
     side: 'paternal' | 'maternal',
     ref: PersonRow,
     forSpouse = false,
+    formerSpouseMap?: Map<string, PersonRow[]>,
   ): AncestorLayer[] {
     const result: AncestorLayer[] = [];
 
@@ -462,7 +517,7 @@ export class DualTreeService {
       for (const sibId of siblingSet) {
         const sib = personMap.get(sibId);
         if (sib) {
-          siblings.push(this.buildCollateralFamily(sib, ref, gen, side, spouseMap, childrenMap, personMap));
+          siblings.push(this.buildCollateralFamily(sib, ref, gen, side, spouseMap, childrenMap, personMap, formerSpouseMap));
         }
       }
 
@@ -490,7 +545,7 @@ export class DualTreeService {
           const sib = personMap.get(sibId);
           if (sib) {
             spouseSiblingFamilies.push(
-              this.buildCollateralFamily(sib, ref, gen, side, spouseMap, childrenMap, personMap)
+              this.buildCollateralFamily(sib, ref, gen, side, spouseMap, childrenMap, personMap, formerSpouseMap)
             );
           }
         }
@@ -522,8 +577,8 @@ export class DualTreeService {
 
 // ── 工具函数 ──
 
-function toNode(person: PersonRow, title: string, side: Side): PersonNode {
-  return {
+function toNode(person: PersonRow, title: string, side: Side, isFormerSpouse?: boolean): PersonNode {
+  const node: PersonNode = {
     id: person.id,
     name: person.name,
     gender: person.gender,
@@ -535,6 +590,8 @@ function toNode(person: PersonRow, title: string, side: Side): PersonNode {
     title,
     side,
   };
+  if (isFormerSpouse) node.isFormerSpouse = true;
+  return node;
 }
 
 function pushTo<T>(map: Map<string, T[]>, key: string, value: T): void {

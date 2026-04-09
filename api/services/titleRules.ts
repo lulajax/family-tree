@@ -48,10 +48,27 @@ export const TITLE_RULES: TitleRule[] = [
   // ==================== 直系晚辈 ====================
   { path: 'child', targetGender: 'male', side: null, elder: null, refGender: null, title: '儿子' },
   { path: 'child', targetGender: 'female', side: null, elder: null, refGender: null, title: '女儿' },
+  // 孙辈（通过儿子 = paternal）
+  { path: 'child>child', targetGender: 'male', side: 'paternal', elder: null, refGender: null, title: '孙子' },
+  { path: 'child>child', targetGender: 'female', side: 'paternal', elder: null, refGender: null, title: '孙女' },
+  // 外孙辈（通过女儿 = maternal）
+  { path: 'child>child', targetGender: 'male', side: 'maternal', elder: null, refGender: null, title: '外孙' },
+  { path: 'child>child', targetGender: 'female', side: 'maternal', elder: null, refGender: null, title: '外孙女' },
+  // fallback（side 未知时）
   { path: 'child>child', targetGender: 'male', side: null, elder: null, refGender: null, title: '孙子' },
   { path: 'child>child', targetGender: 'female', side: null, elder: null, refGender: null, title: '孙女' },
+  // 曾孙辈
+  { path: 'child>child>child', targetGender: 'male', side: 'paternal', elder: null, refGender: null, title: '曾孙' },
+  { path: 'child>child>child', targetGender: 'female', side: 'paternal', elder: null, refGender: null, title: '曾孙女' },
+  { path: 'child>child>child', targetGender: 'male', side: 'maternal', elder: null, refGender: null, title: '外曾孙' },
+  { path: 'child>child>child', targetGender: 'female', side: 'maternal', elder: null, refGender: null, title: '外曾孙女' },
   { path: 'child>child>child', targetGender: 'male', side: null, elder: null, refGender: null, title: '曾孙' },
   { path: 'child>child>child', targetGender: 'female', side: null, elder: null, refGender: null, title: '曾孙女' },
+  // 玄孙辈
+  { path: 'child>child>child>child', targetGender: 'male', side: 'paternal', elder: null, refGender: null, title: '玄孙' },
+  { path: 'child>child>child>child', targetGender: 'female', side: 'paternal', elder: null, refGender: null, title: '玄孙女' },
+  { path: 'child>child>child>child', targetGender: 'male', side: 'maternal', elder: null, refGender: null, title: '外玄孙' },
+  { path: 'child>child>child>child', targetGender: 'female', side: 'maternal', elder: null, refGender: null, title: '外玄孙女' },
   { path: 'child>child>child>child', targetGender: 'male', side: null, elder: null, refGender: null, title: '玄孙' },
   { path: 'child>child>child>child', targetGender: 'female', side: null, elder: null, refGender: null, title: '玄孙女' },
 
@@ -131,6 +148,10 @@ export const TITLE_RULES: TitleRule[] = [
   { path: 'child>spouse', targetGender: 'female', side: null, elder: null, refGender: null, title: '儿媳' },
 
   // 孙辈的配偶
+  { path: 'child>child>spouse', targetGender: 'male', side: 'paternal', elder: null, refGender: null, title: '孙女婿' },
+  { path: 'child>child>spouse', targetGender: 'female', side: 'paternal', elder: null, refGender: null, title: '孙媳' },
+  { path: 'child>child>spouse', targetGender: 'male', side: 'maternal', elder: null, refGender: null, title: '外孙女婿' },
+  { path: 'child>child>spouse', targetGender: 'female', side: 'maternal', elder: null, refGender: null, title: '外孙媳' },
   { path: 'child>child>spouse', targetGender: 'male', side: null, elder: null, refGender: null, title: '孙女婿' },
   { path: 'child>child>spouse', targetGender: 'female', side: null, elder: null, refGender: null, title: '孙媳' },
 
@@ -151,10 +172,26 @@ export const TITLE_RULES: TitleRule[] = [
   { path: 'spouse>sibling', targetGender: 'male', side: null, elder: false, refGender: 'male', title: '小舅子' },
   { path: 'spouse>sibling', targetGender: 'female', side: null, elder: true, refGender: 'male', title: '大姨子' },
   { path: 'spouse>sibling', targetGender: 'female', side: null, elder: false, refGender: 'male', title: '小姨子' },
+  // elder 未知时的兜底
+  { path: 'spouse>sibling', targetGender: 'male', side: null, elder: null, refGender: 'female', title: '叔伯' },
+  { path: 'spouse>sibling', targetGender: 'female', side: null, elder: null, refGender: 'female', title: '姑子' },
+  { path: 'spouse>sibling', targetGender: 'male', side: null, elder: null, refGender: 'male', title: '舅子' },
+  { path: 'spouse>sibling', targetGender: 'female', side: null, elder: null, refGender: 'male', title: '姨子' },
 
   // ==================== 妯娌 / 连襟 ====================
   { path: 'spouse>sibling>spouse', targetGender: 'female', side: null, elder: null, refGender: 'female', title: '妯娌' },
   { path: 'spouse>sibling>spouse', targetGender: 'male', side: null, elder: null, refGender: 'male', title: '连襟' },
+  // 兜底：男方看妻兄弟之妻，女方看夫姐妹之夫
+  { path: 'spouse>sibling>spouse', targetGender: 'female', side: null, elder: null, refGender: 'male', title: '舅嫂/舅弟媳' },
+  { path: 'spouse>sibling>spouse', targetGender: 'male', side: null, elder: null, refGender: 'female', title: '姑夫' },
+
+  // ==================== 配偶兄弟姐妹的子女 ====================
+  { path: 'spouse>sibling>child', targetGender: 'male', side: null, elder: null, refGender: 'male', title: '襟侄' },
+  { path: 'spouse>sibling>child', targetGender: 'female', side: null, elder: null, refGender: 'male', title: '襟侄女' },
+  { path: 'spouse>sibling>child', targetGender: 'male', side: null, elder: null, refGender: 'female', title: '姻侄' },
+  { path: 'spouse>sibling>child', targetGender: 'female', side: null, elder: null, refGender: 'female', title: '姻侄女' },
+  { path: 'spouse>sibling>child', targetGender: 'male', side: null, elder: null, refGender: null, title: '姻侄' },
+  { path: 'spouse>sibling>child', targetGender: 'female', side: null, elder: null, refGender: null, title: '姻侄女' },
 
   // ==================== 隔代旁系 ====================
   { path: 'parent>parent>sibling', targetGender: 'male', side: 'paternal', elder: null, refGender: null, title: '叔公/伯公' },
@@ -317,7 +354,8 @@ export function matchTitleWithFallback(
 
   // 纯后代路径
   if (parts.every(p => p === 'child')) {
-    return `${parts.length}世孙`;
+    const prefix = side === 'maternal' ? '外' : '';
+    return `${prefix}${parts.length}世孙`;
   }
 
   // 包含 spouse → 姻亲

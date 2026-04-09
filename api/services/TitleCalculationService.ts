@@ -32,7 +32,16 @@ export class TitleCalculationService {
     const side = await sideCalculationService.determineSide(from_person_id, to_person_id);
 
     const elder = this.isElder(toPerson, fromPerson);
-    const title = matchTitleWithFallback(pathStr, toPerson.gender, side, elder, fromPerson.gender);
+
+    // 侄辈称谓取决于兄弟姐妹（中间人）的性别，而非参考人性别
+    // 兄弟的子女 = 侄子/侄女，姐妹的子女 = 外甥/外甥女
+    let refGender = fromPerson.gender;
+    if (pathStr === 'sibling>child' && path.length >= 3) {
+      const siblingPerson = await this.getPersonOrThrow(path[1].person_id);
+      refGender = siblingPerson.gender;
+    }
+
+    const title = matchTitleWithFallback(pathStr, toPerson.gender, side, elder, refGender);
 
     return {
       title,

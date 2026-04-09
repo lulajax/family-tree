@@ -52,8 +52,19 @@ export const DualFamilyTree: React.FC<DualFamilyTreeProps> = ({
   const [editTarget, setEditTarget] = useState<PersonNode | null>(null);
   const [isEditing, setIsEditing] = useState(false);
 
+  // ── Collapse state ──
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+  const handleToggleCollapse = useCallback((personId: string) => {
+    setCollapsedNodes(prev => {
+      const next = new Set(prev);
+      if (next.has(personId)) next.delete(personId);
+      else next.add(personId);
+      return next;
+    });
+  }, []);
+
   // ── Layout computation (pure, memoized) ──
-  const { nodes, links, bounds } = useMemo(() => computeLayout(dualTree), [dualTree]);
+  const { nodes, links, bounds } = useMemo(() => computeLayout(dualTree, collapsedNodes), [dualTree, collapsedNodes]);
 
   const hasBothSides = dualTree.paternal.length > 0 && dualTree.maternal.length > 0;
   const regions = useMemo(() => computeRegions(nodes, hasBothSides), [nodes, hasBothSides]);
@@ -186,9 +197,14 @@ export const DualFamilyTree: React.FC<DualFamilyTreeProps> = ({
             person={node.person}
             x={node.x}
             y={node.y}
+            isReference={node.person.id === dualTree.reference.id}
+            childCount={node.childCount}
+            isCollapsed={node.isCollapsed}
             onClick={onPersonClick}
             onContextMenu={handleNodeContextMenu}
             onAddRelative={onAddRelative}
+            onSetReference={onSetReference}
+            onToggleCollapse={handleToggleCollapse}
           />
         ))}
       </div>

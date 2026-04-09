@@ -423,17 +423,43 @@ export class PersonService {
       };
 
       switch (input.relation_type) {
-        case 'father':
+        case 'father': {
           // 新人是 existingPerson 的父亲
           // 验证：existingPerson 最多一个父亲
           await this.validateParentLimit(client, existingPersonId, 'male');
           await createRel(newPersonId, existingPersonId, 'parent_child', 'father');
-          break;
 
-        case 'mother':
+          // 如果已有母亲，自动建立配偶关系
+          const existingMother = await client.query<{ from_person_id: string }>(
+            `SELECT r.from_person_id FROM relationships r
+             JOIN persons p ON p.id = r.from_person_id
+             WHERE r.to_person_id = $1 AND r.type = 'parent_child' AND r.is_active = TRUE
+               AND p.gender = 'female'`,
+            [existingPersonId]
+          );
+          if (existingMother.rows.length === 1) {
+            await createRel(newPersonId, existingMother.rows[0].from_person_id, 'spouse', null);
+          }
+          break;
+        }
+
+        case 'mother': {
           await this.validateParentLimit(client, existingPersonId, 'female');
           await createRel(newPersonId, existingPersonId, 'parent_child', 'mother');
+
+          // 如果已有父亲，自动建立配偶关系
+          const existingFather = await client.query<{ from_person_id: string }>(
+            `SELECT r.from_person_id FROM relationships r
+             JOIN persons p ON p.id = r.from_person_id
+             WHERE r.to_person_id = $1 AND r.type = 'parent_child' AND r.is_active = TRUE
+               AND p.gender = 'male'`,
+            [existingPersonId]
+          );
+          if (existingFather.rows.length === 1) {
+            await createRel(existingFather.rows[0].from_person_id, newPersonId, 'spouse', null);
+          }
           break;
+        }
 
         case 'child': {
           // existingPerson 是新人的父/母
@@ -441,14 +467,15 @@ export class PersonService {
             : existingPerson.gender === 'female' ? 'mother' : null;
           await createRel(existingPersonId, newPersonId, 'parent_child', childSubtype);
 
-          // 自动关联配偶为另一位父/母
+          // 仅当有唯一配偶时，自动关联为另一位父/母（多配偶时跳过，避免歧义）
           const spouseRels = await client.query<{ from_person_id: string; to_person_id: string }>(
             `SELECT from_person_id, to_person_id FROM relationships
              WHERE type = 'spouse' AND is_active = TRUE
                AND (from_person_id = $1 OR to_person_id = $1)`,
             [existingPersonId]
           );
-          for (const sr of spouseRels.rows) {
+          if (spouseRels.rows.length === 1) {
+            const sr = spouseRels.rows[0];
             const spouseId = sr.from_person_id === existingPersonId ? sr.to_person_id : sr.from_person_id;
             const spouseResult = await client.query<{ gender: string }>(
               'SELECT gender FROM persons WHERE id = $1', [spouseId]
@@ -461,9 +488,37 @@ export class PersonService {
           break;
         }
 
-        case 'spouse':
+        case 'spouse': {
           await createRel(existingPersonId, newPersonId, 'spouse', null);
+
+          // 自动将新配偶关联为已有子女的父/母（仅限尚无该性别父/母的子女）
+          const spouseChildRels = await client.query<{ to_person_id: string }>(
+            `SELECT to_person_id FROM relationships
+             WHERE from_person_id = $1 AND type = 'parent_child' AND is_active = TRUE`,
+            [existingPersonId]
+          );
+          if (spouseChildRels.rows.length > 0) {
+            const newSpouseSubtype = gender === 'male' ? 'father'
+              : gender === 'female' ? 'mother' : null;
+            for (const childRel of spouseChildRels.rows) {
+              // 检查该子女是否已有同性别的父/母
+              if (gender === 'male' || gender === 'female') {
+                const existingParent = await client.query<{ count: string }>(
+                  `SELECT COUNT(*)::text AS count FROM relationships r
+                   JOIN persons p ON p.id = r.from_person_id
+                   WHERE r.to_person_id = $1 AND r.type = 'parent_child' AND r.is_active = TRUE
+                     AND p.gender = $2`,
+                  [childRel.to_person_id, gender]
+                );
+                if (parseInt(existingParent.rows[0].count, 10) > 0) {
+                  continue; // 已有同性别父/母，跳过
+                }
+              }
+              await createRel(newPersonId, childRel.to_person_id, 'parent_child', newSpouseSubtype);
+            }
+          }
           break;
+        }
 
         case 'sibling': {
           // 核心：自动关联共享父母
@@ -489,6 +544,80 @@ export class PersonService {
       }
 
       return { person: newPerson, relationships: createdRelationships };
+    });
+  }
+
+  async linkExistingRelative(
+    existingPersonId: string,
+    targetPersonId: string,
+    relationType: string,
+    created_by: string
+  ): Promise<{ relationships: Relationship[] }> {
+    return withTransaction(async (client) => {
+      // 验证两个人都存在
+      const existingResult = await client.query<Person>(
+        'SELECT * FROM persons WHERE id = $1', [existingPersonId]
+      );
+      if (existingResult.rows.length === 0) throw new NotFoundError('人员', existingPersonId);
+      const existingPerson = existingResult.rows[0];
+
+      const targetResult = await client.query<Person>(
+        'SELECT * FROM persons WHERE id = $1', [targetPersonId]
+      );
+      if (targetResult.rows.length === 0) throw new NotFoundError('人员', targetPersonId);
+      const targetPerson = targetResult.rows[0];
+
+      const now = new Date();
+      const createdRelationships: Relationship[] = [];
+
+      const createRel = async (fromId: string, toId: string, type: string, subtype: string | null) => {
+        // 检查是否已存在
+        const existing = await client.query(
+          `SELECT id FROM relationships WHERE from_person_id = $1 AND to_person_id = $2 AND type = $3 AND is_active = TRUE`,
+          [fromId, toId, type]
+        );
+        if (existing.rows.length > 0) return; // 已存在，跳过
+        const relId = randomUUID();
+        const relResult = await client.query<Relationship>(
+          `INSERT INTO relationships (id, from_person_id, to_person_id, type, subtype, is_active, created_at, updated_at, created_by)
+           VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, $8) RETURNING *`,
+          [relId, fromId, toId, type, subtype, now, now, created_by]
+        );
+        createdRelationships.push(relResult.rows[0]);
+      };
+
+      switch (relationType) {
+        case 'father':
+          await this.validateParentLimit(client, existingPersonId, 'male');
+          await createRel(targetPersonId, existingPersonId, 'parent_child', 'father');
+          break;
+        case 'mother':
+          await this.validateParentLimit(client, existingPersonId, 'female');
+          await createRel(targetPersonId, existingPersonId, 'parent_child', 'mother');
+          break;
+        case 'child': {
+          const childSubtype = existingPerson.gender === 'male' ? 'father'
+            : existingPerson.gender === 'female' ? 'mother' : null;
+          await createRel(existingPersonId, targetPersonId, 'parent_child', childSubtype);
+          break;
+        }
+        case 'spouse':
+          await createRel(existingPersonId, targetPersonId, 'spouse', null);
+          break;
+        case 'sibling': {
+          const parentRels = await client.query<{ from_person_id: string; subtype: string | null }>(
+            `SELECT from_person_id, subtype FROM relationships
+             WHERE to_person_id = $1 AND type = 'parent_child' AND is_active = TRUE`,
+            [existingPersonId]
+          );
+          for (const parentRel of parentRels.rows) {
+            await createRel(parentRel.from_person_id, targetPersonId, 'parent_child', parentRel.subtype);
+          }
+          break;
+        }
+      }
+
+      return { relationships: createdRelationships };
     });
   }
 

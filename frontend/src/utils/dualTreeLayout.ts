@@ -6,12 +6,12 @@
 import type { DualTreeResponse, PersonNode, CollateralFamily, DescendantNode, AncestorLayer } from '../types';
 
 // ── 布局常量 ──
-export const NODE_W = 150;
-export const NODE_H = 64;
-export const H_GAP = 40;       // 同层节点横间距
-export const V_GAP = 120;      // 层级间距
-export const HALF_GAP = 140;   // 中心到父系/母系主列的半间距
-export const SPOUSE_GAP = 20;  // 夫妻节点间距
+export const NODE_W = 160;
+export const NODE_H = 80;
+export const H_GAP = 50;       // 同层节点横间距
+export const V_GAP = 130;      // 层级间距
+export const HALF_GAP = 160;   // 中心到父系/母系主列的半间距
+export const SPOUSE_GAP = 30;  // 夫妻节点间距
 export const COLUMN_PAT = -(HALF_GAP + NODE_W / 2); // 父系主列 X
 export const COLUMN_MAT = +(HALF_GAP + NODE_W / 2); // 母系主列 X
 
@@ -38,12 +38,14 @@ export interface LayoutNode {
   x: number;
   y: number;
   type: LayoutNodeType;
+  childCount?: number;       // 子女数量（用于折叠指示）
+  isCollapsed?: boolean;     // 是否被折叠
 }
 
 export interface LayoutLink {
   source: { x: number; y: number };
   target: { x: number; y: number };
-  type: 'parent-child' | 'spouse';
+  type: 'parent-child' | 'spouse' | 'former-spouse';
 }
 
 export interface LayoutBounds {
@@ -82,12 +84,12 @@ export function computeRegions(nodes: LayoutNode[], hasBothSides: boolean): Regi
   const aNodes = nodes.filter(n => n.person.side === 'affinity' && n.type === 'inlaw-parent');
 
   if (pNodes.length > 0) {
-    const minX = Math.min(...pNodes.map(n => n.x)) - NODE_W / 2 - 20;
-    const minY = Math.min(...pNodes.map(n => n.y)) - NODE_H / 2 - 40;
+    const minX = Math.min(...pNodes.map(n => n.x)) - NODE_W / 2 - 30;
+    const minY = Math.min(...pNodes.map(n => n.y)) - NODE_H / 2 - 48;
     const maxX = hasBothSides
-      ? Math.min(-10, Math.max(...pNodes.map(n => n.x)) + NODE_W / 2 + 20)
-      : Math.max(...pNodes.map(n => n.x)) + NODE_W / 2 + 20;
-    const maxY = Math.max(...pNodes.map(n => n.y)) + NODE_H / 2 + 20;
+      ? Math.min(-10, Math.max(...pNodes.map(n => n.x)) + NODE_W / 2 + 30)
+      : Math.max(...pNodes.map(n => n.x)) + NODE_W / 2 + 30;
+    const maxY = Math.max(...pNodes.map(n => n.y)) + NODE_H / 2 + 30;
     regions.push({
       label: '父系血统', color: COLORS.paternalBg,
       strokeColor: 'rgba(59,130,246,0.15)', minX, minY, maxX, maxY,
@@ -96,11 +98,11 @@ export function computeRegions(nodes: LayoutNode[], hasBothSides: boolean): Regi
 
   if (mNodes.length > 0) {
     const minX = hasBothSides
-      ? Math.max(10, Math.min(...mNodes.map(n => n.x)) - NODE_W / 2 - 20)
-      : Math.min(...mNodes.map(n => n.x)) - NODE_W / 2 - 20;
-    const minY = Math.min(...mNodes.map(n => n.y)) - NODE_H / 2 - 40;
-    const maxX = Math.max(...mNodes.map(n => n.x)) + NODE_W / 2 + 20;
-    const maxY = Math.max(...mNodes.map(n => n.y)) + NODE_H / 2 + 20;
+      ? Math.max(10, Math.min(...mNodes.map(n => n.x)) - NODE_W / 2 - 30)
+      : Math.min(...mNodes.map(n => n.x)) - NODE_W / 2 - 30;
+    const minY = Math.min(...mNodes.map(n => n.y)) - NODE_H / 2 - 48;
+    const maxX = Math.max(...mNodes.map(n => n.x)) + NODE_W / 2 + 30;
+    const maxY = Math.max(...mNodes.map(n => n.y)) + NODE_H / 2 + 30;
     regions.push({
       label: '母系血统', color: COLORS.maternalBg,
       strokeColor: 'rgba(236,72,153,0.15)', minX, minY, maxX, maxY,
@@ -108,10 +110,10 @@ export function computeRegions(nodes: LayoutNode[], hasBothSides: boolean): Regi
   }
 
   if (aNodes.length > 0) {
-    const minX = Math.min(...aNodes.map(n => n.x)) - NODE_W / 2 - 20;
-    const minY = Math.min(...aNodes.map(n => n.y)) - NODE_H / 2 - 40;
-    const maxX = Math.max(...aNodes.map(n => n.x)) + NODE_W / 2 + 20;
-    const maxY = Math.max(...aNodes.map(n => n.y)) + NODE_H / 2 + 20;
+    const minX = Math.min(...aNodes.map(n => n.x)) - NODE_W / 2 - 30;
+    const minY = Math.min(...aNodes.map(n => n.y)) - NODE_H / 2 - 48;
+    const maxX = Math.max(...aNodes.map(n => n.x)) + NODE_W / 2 + 30;
+    const maxY = Math.max(...aNodes.map(n => n.y)) + NODE_H / 2 + 30;
     regions.push({
       label: '姻亲', color: COLORS.affinityBg,
       strokeColor: 'rgba(245,158,11,0.15)', minX, minY, maxX, maxY,
@@ -121,10 +123,41 @@ export function computeRegions(nodes: LayoutNode[], hasBothSides: boolean): Regi
   return regions;
 }
 
+// ── 碰撞检测：在目标 Y 层找到不重叠的 X 位置 ──
+
+function findSafeX(
+  existingNodes: LayoutNode[],
+  targetY: number,
+  desiredX: number,
+  direction: 1 | -1 = 1,
+): number {
+  let safeX = desiredX;
+  const minCenterDist = NODE_W + H_GAP;
+
+  for (const n of existingNodes) {
+    if (Math.abs(n.y - targetY) >= NODE_H) continue;
+    if (direction === 1) {
+      const needed = n.x + minCenterDist;
+      if (safeX < needed && safeX > n.x - minCenterDist) {
+        safeX = needed;
+      }
+    } else {
+      const needed = n.x - minCenterDist;
+      if (safeX > needed && safeX < n.x + minCenterDist) {
+        safeX = needed;
+      }
+    }
+  }
+  return safeX;
+}
+
 // ── 后代子树测量 ──
 
 function measureDescendant(desc: DescendantNode): number {
-  const unitW = desc.spouses[0] ? (2 * NODE_W + SPOUSE_GAP) : NODE_W;
+  // 本人 + 所有配偶（含前配偶）的宽度
+  const spouseCount = desc.spouses.length;
+  const unitW = spouseCount > 0 ? (NODE_W + spouseCount * (NODE_W + SPOUSE_GAP)) : NODE_W;
+  // 注：亲家（spouseParents）在上一层独立布局，不计入当前层宽度
   if (desc.children.length === 0) return unitW;
 
   let childrenTotalW = 0;
@@ -146,6 +179,7 @@ function layoutDescendants(
   parentY: number,
   nodes: LayoutNode[],
   links: LayoutLink[],
+  collapsedNodes?: Set<string>,
 ): void {
   if (descendants.length === 0) return;
 
@@ -162,27 +196,64 @@ function layoutDescendants(
     const descCenterX = curX + w / 2;
 
     let personX: number;
-    if (desc.spouses[0]) {
-      personX = descCenterX - (NODE_W + SPOUSE_GAP) / 2;
+    const spCount = desc.spouses.length;
+    if (spCount > 0) {
+      // 本人居左，所有配偶在右侧排列
+      const totalPairW = NODE_W + spCount * (NODE_W + SPOUSE_GAP);
+      personX = descCenterX - totalPairW / 2 + NODE_W / 2;
     } else {
       personX = descCenterX;
     }
 
-    nodes.push({ person: desc.person, x: personX, y, type: 'child' });
+    const isCollapsed = collapsedNodes?.has(desc.person.id) ?? false;
+    const totalChildren = desc.children.length;
+
+    nodes.push({
+      person: desc.person, x: personX, y, type: 'child',
+      childCount: totalChildren > 0 ? totalChildren : undefined,
+      isCollapsed: isCollapsed && totalChildren > 0,
+    });
     links.push({ source: { x: parentX, y: parentY }, target: { x: personX, y }, type: 'parent-child' });
 
-    if (desc.spouses[0]) {
-      const spouseX = personX + NODE_W + SPOUSE_GAP;
-      nodes.push({ person: desc.spouses[0], x: spouseX, y, type: 'spouse' });
-      links.push({ source: { x: personX, y }, target: { x: spouseX, y }, type: 'spouse' });
+    // 渲染所有配偶（含前配偶）
+    let lastSpouseX = personX;
+    for (let si = 0; si < desc.spouses.length; si++) {
+      const sp = desc.spouses[si];
+      const spouseX = personX + (si + 1) * (NODE_W + SPOUSE_GAP);
+      const linkType = sp.isFormerSpouse ? 'former-spouse' as const : 'spouse' as const;
+      nodes.push({ person: sp, x: spouseX, y, type: 'spouse' });
+      links.push({ source: { x: lastSpouseX, y }, target: { x: spouseX, y }, type: linkType });
+      lastSpouseX = spouseX;
     }
 
-    if (desc.children.length > 0) {
+    // 亲家：配偶的父母，显示在同辈层（完整 V_GAP），带碰撞检测
+    if (desc.spouses[0] && !desc.spouses[0].isFormerSpouse && desc.spouseParents && desc.spouseParents.length > 0) {
+      const firstSpouseX = personX + NODE_W + SPOUSE_GAP;
+      const spParentY = y - V_GAP;
+      const parentPositions: number[] = [];
+      for (let pi = 0; pi < desc.spouseParents.length; pi++) {
+        let spParentX = firstSpouseX + pi * (NODE_W + SPOUSE_GAP);
+        spParentX = findSafeX(nodes, spParentY, spParentX, 1);
+        if (pi > 0) {
+          spParentX = Math.max(spParentX, parentPositions[pi - 1] + NODE_W + SPOUSE_GAP);
+        }
+        parentPositions.push(spParentX);
+        nodes.push({ person: desc.spouseParents[pi], x: spParentX, y: spParentY, type: 'inlaw-parent' });
+        if (pi === 0) {
+          links.push({ source: { x: spParentX, y: spParentY }, target: { x: firstSpouseX, y }, type: 'parent-child' });
+        }
+      }
+      if (desc.spouseParents.length === 2) {
+        links.push({ source: { x: parentPositions[0], y: spParentY }, target: { x: parentPositions[1], y: spParentY }, type: 'spouse' });
+      }
+    }
+
+    if (desc.children.length > 0 && !isCollapsed) {
       // 有配偶时从夫妻中点引出子女连线
       const childAnchorX = desc.spouses[0]
         ? personX + (NODE_W + SPOUSE_GAP) / 2
         : personX;
-      layoutDescendants(desc.children, descCenterX, y + V_GAP, childAnchorX, y, nodes, links);
+      layoutDescendants(desc.children, descCenterX, y + V_GAP, childAnchorX, y, nodes, links, collapsedNodes);
     }
 
     curX += w + H_GAP;
@@ -200,10 +271,12 @@ function layoutCollateralFamilies(
   links: LayoutLink[],
   parentAnchorY?: number,
   parentAnchorX?: number,
+  collapsedNodes?: Set<string>,
 ): number {
   let offset = 0;
   for (const cf of families) {
-    const selfUnitW = cf.spouses[0] ? (2 * NODE_W + SPOUSE_GAP) : NODE_W;
+    const spouseCount = cf.spouses.length;
+    const selfUnitW = spouseCount > 0 ? (NODE_W + spouseCount * (NODE_W + SPOUSE_GAP)) : NODE_W;
     let childrenW = 0;
     for (let i = 0; i < cf.children.length; i++) {
       if (i > 0) childrenW += H_GAP;
@@ -213,28 +286,39 @@ function layoutCollateralFamilies(
     const familyUnits = Math.ceil(familyW / (NODE_W + H_GAP));
 
     const sibX = baseX + direction * ((NODE_W + H_GAP) * offset + NODE_W / 2 + H_GAP + familyW / 2);
-    const personX = cf.spouses[0]
-      ? sibX - direction * (NODE_W + SPOUSE_GAP) / 2
+    const cfSpCount = cf.spouses.length;
+    const personX = cfSpCount > 0
+      ? sibX - direction * (cfSpCount * (NODE_W + SPOUSE_GAP)) / 2
       : sibX;
 
-    nodes.push({ person: cf.person, x: personX, y, type: 'sibling' });
+    const cfIsCollapsed = collapsedNodes?.has(cf.person.id) ?? false;
+    nodes.push({
+      person: cf.person, x: personX, y, type: 'sibling',
+      childCount: cf.children.length > 0 ? cf.children.length : undefined,
+      isCollapsed: cfIsCollapsed && cf.children.length > 0,
+    });
 
     if (parentAnchorY !== undefined && parentAnchorX !== undefined) {
       links.push({ source: { x: parentAnchorX, y: parentAnchorY }, target: { x: personX, y }, type: 'parent-child' });
     }
 
-    if (cf.spouses[0]) {
-      const spouseX = personX + direction * (NODE_W + SPOUSE_GAP);
-      nodes.push({ person: cf.spouses[0], x: spouseX, y, type: 'collateral-spouse' });
-      links.push({ source: { x: personX, y }, target: { x: spouseX, y }, type: 'spouse' });
+    // 渲染所有配偶（含前配偶）
+    let lastCfSpouseX = personX;
+    for (let si = 0; si < cf.spouses.length; si++) {
+      const sp = cf.spouses[si];
+      const spouseX = personX + direction * (si + 1) * (NODE_W + SPOUSE_GAP);
+      const linkType = sp.isFormerSpouse ? 'former-spouse' as const : 'spouse' as const;
+      nodes.push({ person: sp, x: spouseX, y, type: 'collateral-spouse' });
+      links.push({ source: { x: lastCfSpouseX, y }, target: { x: spouseX, y }, type: linkType });
+      lastCfSpouseX = spouseX;
     }
 
-    if (cf.children.length > 0) {
-      const childY = y + V_GAP * 0.7;
+    if (cf.children.length > 0 && !cfIsCollapsed) {
+      const childY = y + V_GAP;
       const cfAnchorX = cf.spouses[0]
         ? personX + direction * (NODE_W + SPOUSE_GAP) / 2
         : personX;
-      layoutDescendants(cf.children, sibX, childY, cfAnchorX, y, nodes, links);
+      layoutDescendants(cf.children, sibX, childY, cfAnchorX, y, nodes, links, collapsedNodes);
     }
 
     offset += familyUnits;
@@ -254,18 +338,25 @@ function layoutAncestorSpouseFamily(
 ): void {
   if (!layer.spouses[0]) return;
 
-  // 配偶的父母
-  const parentY = y - V_GAP * 0.5;
+  // 配偶的父母（同辈层，带碰撞检测）
+  const parentY = y - V_GAP;
   if (layer.spouseParents.length > 0) {
+    const parentPositions: number[] = [];
     layer.spouseParents.forEach((parent, pi) => {
-      const parentX = spouseX + direction * pi * (NODE_W + SPOUSE_GAP);
+      let parentX = spouseX + direction * pi * (NODE_W + SPOUSE_GAP);
+      parentX = findSafeX(nodes, parentY, parentX, direction);
+      if (pi > 0) {
+        const minX = direction === 1
+          ? parentPositions[pi - 1] + NODE_W + SPOUSE_GAP
+          : parentPositions[pi - 1] - NODE_W - SPOUSE_GAP;
+        parentX = direction === 1 ? Math.max(parentX, minX) : Math.min(parentX, minX);
+      }
+      parentPositions.push(parentX);
       nodes.push({ person: parent, x: parentX, y: parentY, type: 'inlaw-parent' });
       links.push({ source: { x: parentX, y: parentY }, target: { x: spouseX, y }, type: 'parent-child' });
     });
     if (layer.spouseParents.length === 2) {
-      const p1X = spouseX;
-      const p2X = spouseX + direction * (NODE_W + SPOUSE_GAP);
-      links.push({ source: { x: p1X, y: parentY }, target: { x: p2X, y: parentY }, type: 'spouse' });
+      links.push({ source: { x: parentPositions[0], y: parentY }, target: { x: parentPositions[1], y: parentY }, type: 'spouse' });
     }
   }
 
@@ -282,7 +373,7 @@ function layoutAncestorSpouseFamily(
 
 // ── 主布局函数 ──
 
-export function computeLayout(tree: DualTreeResponse): LayoutResult {
+export function computeLayout(tree: DualTreeResponse, collapsedNodes?: Set<string>): LayoutResult {
   const nodes: LayoutNode[] = [];
   const links: LayoutLink[] = [];
 
@@ -299,8 +390,9 @@ export function computeLayout(tree: DualTreeResponse): LayoutResult {
 
   tree.spouses.forEach((sf, i) => {
     const spX = refX + (NODE_W + SPOUSE_GAP) + i * (NODE_W + H_GAP);
+    const spLinkType = sf.person.isFormerSpouse ? 'former-spouse' as const : 'spouse' as const;
     nodes.push({ person: sf.person, x: spX, y: refY, type: 'spouse' });
-    links.push({ source: { x: refX, y: refY }, target: { x: spX, y: refY }, type: 'spouse' });
+    links.push({ source: { x: refX, y: refY }, target: { x: spX, y: refY }, type: spLinkType });
 
     // 配偶的祖先链
     for (let ai = 0; ai < sf.ancestors.length; ai++) {
@@ -372,7 +464,7 @@ export function computeLayout(tree: DualTreeResponse): LayoutResult {
     const parentAnchorX = tree.paternal.length > 1 ? COLUMN_PAT : undefined;
     layoutCollateralFamilies(
       tree.paternal[0].siblings, COLUMN_PAT, fatherY, -1,
-      nodes, links, parentAnchorY, parentAnchorX,
+      nodes, links, parentAnchorY, parentAnchorX, collapsedNodes,
     );
   }
 
@@ -382,7 +474,7 @@ export function computeLayout(tree: DualTreeResponse): LayoutResult {
     const parentAnchorX = tree.maternal.length > 1 ? colMat : undefined;
     layoutCollateralFamilies(
       tree.maternal[0].siblings, colMat, fatherY, 1,
-      nodes, links, parentAnchorY, parentAnchorX,
+      nodes, links, parentAnchorY, parentAnchorX, collapsedNodes,
     );
   }
 
@@ -413,7 +505,7 @@ export function computeLayout(tree: DualTreeResponse): LayoutResult {
     const parentAnchorX = i + 1 < tree.paternal.length ? COLUMN_PAT : undefined;
     layoutCollateralFamilies(
       layer.siblings, outerX, y, -1,
-      nodes, links, parentAnchorY, parentAnchorX,
+      nodes, links, parentAnchorY, parentAnchorX, collapsedNodes,
     );
   }
 
@@ -444,7 +536,7 @@ export function computeLayout(tree: DualTreeResponse): LayoutResult {
     const parentAnchorX = i + 1 < tree.maternal.length ? colMat : undefined;
     layoutCollateralFamilies(
       layer.siblings, outerX, y, 1,
-      nodes, links, parentAnchorY, parentAnchorX,
+      nodes, links, parentAnchorY, parentAnchorX, collapsedNodes,
     );
   }
 
@@ -452,12 +544,12 @@ export function computeLayout(tree: DualTreeResponse): LayoutResult {
   if (hasFather) {
     layoutCollateralFamilies(
       tree.siblings, refX, refY, -1,
-      nodes, links, fatherY, COLUMN_PAT,
+      nodes, links, fatherY, COLUMN_PAT, collapsedNodes,
     );
   } else {
     layoutCollateralFamilies(
       tree.siblings, refX, refY, -1,
-      nodes, links, undefined, undefined,
+      nodes, links, undefined, undefined, collapsedNodes,
     );
   }
 
@@ -468,7 +560,7 @@ export function computeLayout(tree: DualTreeResponse): LayoutResult {
     const coupleAnchorX = tree.spouses.length > 0
       ? refX + (NODE_W + SPOUSE_GAP) / 2
       : refX;
-    layoutDescendants(tree.children, coupleAnchorX, childrenY, coupleAnchorX, refY, nodes, links);
+    layoutDescendants(tree.children, coupleAnchorX, childrenY, coupleAnchorX, refY, nodes, links, collapsedNodes);
   }
 
   // 计算边界

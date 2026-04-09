@@ -4,6 +4,7 @@ import { familyService, dualTreeService } from '../services';
 import { validateBody, validateParams } from '../middleware';
 import { successResponse, sendNotFoundError } from '../utils/response';
 import { CreateFamilySchema, UpdateFamilySchema, UuidSchema } from '../types/schemas';
+import { query } from '../config/database';
 
 const router = Router();
 
@@ -144,6 +145,22 @@ router.put('/:id/root', async (req: Request, res: Response, next: NextFunction) 
     const { id } = z.object({ id: UuidSchema }).parse(req.params);
     const { person_id } = z.object({ person_id: UuidSchema }).parse(req.body);
     successResponse(res, await familyService.setRootPerson(id, person_id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/:id/members', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = z.object({ id: UuidSchema }).parse(req.params);
+    const { q } = z.object({ q: z.string().optional() }).parse(req.query);
+    const result = await query<{ id: string; name: string; gender: string; birth_date: string | null }>(
+      q
+        ? `SELECT id, name, gender, birth_date FROM persons WHERE family_id = $1 AND name ILIKE $2 ORDER BY name LIMIT 20`
+        : `SELECT id, name, gender, birth_date FROM persons WHERE family_id = $1 ORDER BY name LIMIT 50`,
+      q ? [id, `%${q}%`] : [id]
+    );
+    successResponse(res, result.rows);
   } catch (error) {
     next(error);
   }

@@ -23,13 +23,14 @@ export function TreeBackground({ regions, hasBothSides, minY, maxY }: TreeBackgr
           <rect
             x={r.minX} y={r.minY}
             width={r.maxX - r.minX} height={r.maxY - r.minY}
-            rx={16} fill={r.color} stroke={r.strokeColor} strokeWidth={1}
+            rx={20} fill={r.color} stroke={r.strokeColor} strokeWidth={1}
+            strokeDasharray="6,4"
           />
           <text
-            x={(r.minX + r.maxX) / 2} y={r.minY + 20}
+            x={(r.minX + r.maxX) / 2} y={r.minY + 22}
             textAnchor="middle"
             fill={LABEL_COLORS[r.label] ?? '#666'}
-            fontSize="14px" fontWeight="600" opacity={0.7}
+            fontSize="13px" fontWeight="500" opacity={0.55}
           >
             {r.label}
           </text>

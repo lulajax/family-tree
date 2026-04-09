@@ -55,12 +55,14 @@ export interface PersonNode {
   native_place: string | null;
   title: string;
   side: Side;
+  isFormerSpouse?: boolean;
 }
 
 // 递归后代节点（支持无限层级）
 export interface DescendantNode {
   person: PersonNode;
   spouses: PersonNode[];
+  spouseParents: PersonNode[];
   children: DescendantNode[];
 }
 
