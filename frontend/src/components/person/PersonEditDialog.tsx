@@ -25,6 +25,8 @@ export const PersonEditDialog: React.FC<PersonEditDialogProps> = ({
   const [birthDate, setBirthDate] = useState(person.birth_date ?? '');
   const [deathDate, setDeathDate] = useState(person.death_date ?? '');
   const [bio, setBio] = useState('');
+  const [nativePlace, setNativePlace] = useState(person.native_place ?? '');
+  const [birthOrder, setBirthOrder] = useState(person.birth_order != null ? String(person.birth_order) : '');
 
   // 重置表单当 person 变化时
   useEffect(() => {
@@ -33,6 +35,8 @@ export const PersonEditDialog: React.FC<PersonEditDialogProps> = ({
     setBirthDate(person.birth_date ?? '');
     setDeathDate(person.death_date ?? '');
     setBio('');
+    setNativePlace(person.native_place ?? '');
+    setBirthOrder(person.birth_order != null ? String(person.birth_order) : '');
   }, [person]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -53,6 +57,8 @@ export const PersonEditDialog: React.FC<PersonEditDialogProps> = ({
     if (birthDate) data.birth_date = birthDate;
     if (deathDate) data.death_date = deathDate;
     if (bio.trim()) data.bio = bio.trim();
+    if (nativePlace.trim()) (data as Record<string, unknown>).native_place = nativePlace.trim();
+    if (birthOrder) (data as Record<string, unknown>).birth_order = parseInt(birthOrder, 10);
 
     onConfirm(data);
   };
@@ -151,6 +157,31 @@ export const PersonEditDialog: React.FC<PersonEditDialogProps> = ({
                 type="date"
                 value={deathDate}
                 onChange={(e) => setDeathDate(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+          </div>
+
+          {/* 籍贯 & 排行 */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">籍贯</label>
+              <input
+                type="text"
+                value={nativePlace}
+                onChange={(e) => setNativePlace(e.target.value)}
+                placeholder="例：广东潮州"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">排行</label>
+              <input
+                type="number"
+                min="1"
+                value={birthOrder}
+                onChange={(e) => setBirthOrder(e.target.value)}
+                placeholder="第几位"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
               />
             </div>

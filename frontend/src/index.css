@@ -206,20 +206,18 @@
   }
 }
 
-/* D3.js 树形图样式 */
-.tree-link {
-  fill: none;
-  stroke: #9ca3af;
-  stroke-width: 1.5px;
+/* Bottom drawer slide-up animation */
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
 }
 
-.tree-node-rect {
-  cursor: pointer;
-  transition: all 0.2s ease-out;
-}
-
-.tree-node-rect:hover {
-  filter: brightness(1.1);
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
 }
 
 /* 响应式字体 */

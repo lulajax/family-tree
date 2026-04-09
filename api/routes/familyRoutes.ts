@@ -36,7 +36,9 @@ router.post(
         req.body.name,
         req.body.description,
         req.body.root_person_id,
-        created_by
+        created_by,
+        req.body.generation_name,
+        req.body.hall_name,
       );
       successResponse(res, family, 201);
     } catch (error) {

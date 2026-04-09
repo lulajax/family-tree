@@ -1,10 +1,14 @@
 import { useState } from 'react';
-import { useFamilyStore } from '../../store/familyStore';
 import type { PersonNode } from '../../types';
 
 interface AddRelativeDialogProps {
-  targetPerson: PersonNode;
+  person: PersonNode;
   onClose: () => void;
+  onSubmit: (
+    personId: string,
+    relationType: string,
+    personData: { name: string; gender?: string; birth_date?: string; death_date?: string },
+  ) => Promise<void>;
 }
 
 const RELATION_TYPES = [
@@ -16,8 +20,9 @@ const RELATION_TYPES = [
 ] as const;
 
 export const AddRelativeDialog: React.FC<AddRelativeDialogProps> = ({
-  targetPerson,
+  person,
   onClose,
+  onSubmit,
 }) => {
   const [relationType, setRelationType] = useState('child');
   const [name, setName] = useState('');
@@ -27,8 +32,6 @@ export const AddRelativeDialog: React.FC<AddRelativeDialogProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { addRelative } = useFamilyStore();
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
@@ -36,7 +39,7 @@ export const AddRelativeDialog: React.FC<AddRelativeDialogProps> = ({
     setSubmitting(true);
     setError(null);
     try {
-      await addRelative(targetPerson.id, relationType, {
+      await onSubmit(person.id, relationType, {
         name: name.trim(),
         gender: gender !== 'unknown' ? gender : undefined,
         birth_date: birthDate || undefined,
@@ -59,7 +62,7 @@ export const AddRelativeDialog: React.FC<AddRelativeDialogProps> = ({
         {/* 标题 */}
         <div className="flex items-center justify-between px-5 py-4 border-b">
           <h2 className="text-lg font-semibold text-gray-800">
-            为「{targetPerson.name}」添加亲属
+            为「{person.name}」添加亲属
           </h2>
           <button
             onClick={onClose}

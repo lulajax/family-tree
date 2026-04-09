@@ -36,9 +36,10 @@ export class PersonService {
         `
           INSERT INTO persons (
             id, family_id, name, gender, birth_date, death_date, bio,
+            photo_url, birth_order, native_place,
             created_at, updated_at, created_by
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
           RETURNING *
         `,
         [
@@ -49,6 +50,9 @@ export class PersonService {
           input.birth_date ? new Date(input.birth_date) : null,
           input.death_date ? new Date(input.death_date) : null,
           input.bio ?? null,
+          input.photo_url ?? null,
+          input.birth_order ?? null,
+          input.native_place ?? null,
           now,
           now,
           created_by,
@@ -114,8 +118,11 @@ export class PersonService {
             birth_date = COALESCE($3, birth_date),
             death_date = COALESCE($4, death_date),
             bio = COALESCE($5, bio),
-            updated_at = $6
-          WHERE id = $7
+            photo_url = COALESCE($6, photo_url),
+            birth_order = COALESCE($7, birth_order),
+            native_place = COALESCE($8, native_place),
+            updated_at = $9
+          WHERE id = $10
           RETURNING *
         `,
         [
@@ -124,6 +131,9 @@ export class PersonService {
           input.birth_date ? new Date(input.birth_date) : null,
           input.death_date ? new Date(input.death_date) : null,
           input.bio ?? null,
+          input.photo_url !== undefined ? input.photo_url : null,
+          input.birth_order !== undefined ? input.birth_order : null,
+          input.native_place !== undefined ? input.native_place : null,
           now,
           person_id,
         ]
@@ -425,11 +435,31 @@ export class PersonService {
           await createRel(newPersonId, existingPersonId, 'parent_child', 'mother');
           break;
 
-        case 'child':
+        case 'child': {
           // existingPerson 是新人的父/母
-          await createRel(existingPersonId, newPersonId, 'parent_child',
-            existingPerson.gender === 'male' ? 'father' : existingPerson.gender === 'female' ? 'mother' : null);
+          const childSubtype = existingPerson.gender === 'male' ? 'father'
+            : existingPerson.gender === 'female' ? 'mother' : null;
+          await createRel(existingPersonId, newPersonId, 'parent_child', childSubtype);
+
+          // 自动关联配偶为另一位父/母
+          const spouseRels = await client.query<{ from_person_id: string; to_person_id: string }>(
+            `SELECT from_person_id, to_person_id FROM relationships
+             WHERE type = 'spouse' AND is_active = TRUE
+               AND (from_person_id = $1 OR to_person_id = $1)`,
+            [existingPersonId]
+          );
+          for (const sr of spouseRels.rows) {
+            const spouseId = sr.from_person_id === existingPersonId ? sr.to_person_id : sr.from_person_id;
+            const spouseResult = await client.query<{ gender: string }>(
+              'SELECT gender FROM persons WHERE id = $1', [spouseId]
+            );
+            const spouseGender = spouseResult.rows[0]?.gender;
+            const spouseSubtype = spouseGender === 'male' ? 'father'
+              : spouseGender === 'female' ? 'mother' : null;
+            await createRel(spouseId, newPersonId, 'parent_child', spouseSubtype);
+          }
           break;
+        }
 
         case 'spouse':
           await createRel(existingPersonId, newPersonId, 'spouse', null);
@@ -504,9 +534,10 @@ export class PersonService {
       `
         INSERT INTO person_versions (
           id, person_id, version, name, gender, birth_date, death_date, bio,
+          photo_url, birth_order, native_place,
           valid_from, valid_to, changed_by, change_reason
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULL, $13, $14)
       `,
       [
         randomUUID(),
@@ -517,6 +548,9 @@ export class PersonService {
         person.birth_date,
         person.death_date,
         person.bio,
+        person.photo_url ?? null,
+        person.birth_order ?? null,
+        person.native_place ?? null,
         person.updated_at,
         changed_by,
         change_reason,

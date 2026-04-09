@@ -14,6 +14,9 @@ export interface Person {
   birth_date: string | null;
   death_date: string | null;
   bio: string | null;
+  photo_url: string | null;
+  birth_order: number | null;
+  native_place: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -23,6 +26,8 @@ export interface Family {
   name: string;
   description: string | null;
   root_person_id: string | null;
+  generation_name: string | null;
+  hall_name: string | null;
   created_at: string;
   updated_at: string;
   member_count?: number;
@@ -45,6 +50,9 @@ export interface PersonNode {
   gender: Gender;
   birth_date: string | null;
   death_date: string | null;
+  photo_url: string | null;
+  birth_order: number | null;
+  native_place: string | null;
   title: string;
   side: Side;
 }
@@ -52,27 +60,27 @@ export interface PersonNode {
 // 递归后代节点（支持无限层级）
 export interface DescendantNode {
   person: PersonNode;
-  spouse: PersonNode | null;
+  spouses: PersonNode[];
   children: DescendantNode[];
 }
 
 // 旁系亲属家庭（叔叔+婶婶+堂兄弟 / 舅舅+舅妈+表兄弟）
 export interface CollateralFamily {
-  person: PersonNode;           // 叔叔/姑姑/舅舅/姨妈
-  spouse: PersonNode | null;    // 婶婶/姑父/舅妈/姨父
-  children: DescendantNode[];   // 堂兄弟/表兄弟（递归后代）
+  person: PersonNode;
+  spouses: PersonNode[];
+  children: DescendantNode[];
 }
 
 // 配偶家族（妻子+祖先链+小舅子/小姨子）
 export interface SpouseFamily {
-  person: PersonNode;           // 妻子/丈夫
-  ancestors: AncestorLayer[];   // 配偶的祖先链（岳父→岳祖父→...无限深度）
-  siblings: CollateralFamily[]; // 小舅子/小姨子（含他们的配偶和子女）
+  person: PersonNode;
+  ancestors: AncestorLayer[];
+  siblings: CollateralFamily[];
 }
 
 export interface AncestorLayer {
   ancestor: PersonNode;
-  spouse: PersonNode | null;
+  spouses: PersonNode[];
   siblings: CollateralFamily[];
   spouseParents: PersonNode[];
   spouseSiblings: CollateralFamily[];

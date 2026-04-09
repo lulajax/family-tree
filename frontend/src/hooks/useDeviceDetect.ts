@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import type { DeviceType } from '../types';
+type DeviceType = 'mobile' | 'tablet' | 'desktop' | 'large';
 
 // 断点配置
 const BREAKPOINTS = {

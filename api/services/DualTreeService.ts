@@ -1,5 +1,6 @@
 import { query } from '../config/database';
 import { Gender, Side, UUID } from '../types';
+import { matchTitleWithFallback, buildAncestorPath, buildDescendantPath } from './titleRules';
 
 // ── 双系图谱专用类型 ──
 
@@ -9,31 +10,34 @@ export interface PersonNode {
   gender: Gender;
   birth_date: string | null;
   death_date: string | null;
+  photo_url: string | null;
+  birth_order: number | null;
+  native_place: string | null;
   title: string;
   side: Side;
 }
 
 export interface DescendantNode {
   person: PersonNode;
-  spouse: PersonNode | null;
+  spouses: PersonNode[];
   children: DescendantNode[];
 }
 
 export interface CollateralFamily {
   person: PersonNode;
-  spouse: PersonNode | null;
+  spouses: PersonNode[];
   children: DescendantNode[];
 }
 
 export interface SpouseFamily {
   person: PersonNode;
-  ancestors: AncestorLayer[];     // 配偶的祖先链（从配偶父亲向上追溯，配偶母亲为spouse）
+  ancestors: AncestorLayer[];
   siblings: CollateralFamily[];
 }
 
 export interface AncestorLayer {
   ancestor: PersonNode;
-  spouse: PersonNode | null;
+  spouses: PersonNode[];
   siblings: CollateralFamily[];
   spouseParents: PersonNode[];
   spouseSiblings: CollateralFamily[];
@@ -57,6 +61,9 @@ interface PersonRow {
   gender: Gender;
   birth_date: Date | null;
   death_date: Date | null;
+  photo_url: string | null;
+  birth_order: number | null;
+  native_place: string | null;
 }
 
 interface RelRow {
@@ -64,6 +71,7 @@ interface RelRow {
   to_person_id: string;
   type: string;
   subtype: string | null;
+  start_date: Date | null;
 }
 
 /**
@@ -73,6 +81,9 @@ interface RelRow {
  *  1. 一次性加载整个家族的 persons + relationships 到内存
  *  2. 在内存中用邻接表遍历，彻底避免 N+1 查询
  *  3. 以参考人为中心，分别沿父方 / 母方向上追溯
+ *  4. 称谓通过 titleRules.ts 统一规则表匹配，支持 177 条规则 + 兜底
+ *  5. 父系/母系均沿男性向上追溯（母系：母亲→外公→外曾祖父→…）
+ *  6. 支持多配偶，按 start_date 排序（原配在前）
  */
 export class DualTreeService {
   async buildDualTree(
@@ -83,11 +94,11 @@ export class DualTreeService {
     // ── 1. 批量加载 ──
     const [personsResult, relsResult] = await Promise.all([
       query<PersonRow>(
-        'SELECT id, name, gender, birth_date, death_date FROM persons WHERE family_id = $1',
+        'SELECT id, name, gender, birth_date, death_date, photo_url, birth_order, native_place FROM persons WHERE family_id = $1',
         [familyId]
       ),
       query<RelRow>(
-        `SELECT r.from_person_id, r.to_person_id, r.type, r.subtype
+        `SELECT r.from_person_id, r.to_person_id, r.type, r.subtype, r.start_date
          FROM relationships r
          JOIN persons p ON p.id = r.from_person_id
          WHERE p.family_id = $1 AND r.is_active = TRUE`,
@@ -117,10 +128,30 @@ export class DualTreeService {
         const a = personMap.get(r.from_person_id);
         const b = personMap.get(r.to_person_id);
         if (a && b) {
-          pushTo(spouseMap, r.from_person_id, b);
-          pushTo(spouseMap, r.to_person_id, a);
+          pushToUnique(spouseMap, r.from_person_id, b);
+          pushToUnique(spouseMap, r.to_person_id, a);
         }
       }
+    }
+
+    // 多配偶排序：按 start_date ASC，null 在前（原配）
+    for (const [personId, spouseList] of spouseMap) {
+      if (spouseList.length <= 1) continue;
+      const spouseWithDates = spouseList.map(sp => {
+        const rel = relsResult.rows.find(r =>
+          r.type === 'spouse' &&
+          ((r.from_person_id === personId && r.to_person_id === sp.id) ||
+           (r.to_person_id === personId && r.from_person_id === sp.id))
+        );
+        return { spouse: sp, startDate: rel?.start_date ?? null };
+      });
+      spouseWithDates.sort((a, b) => {
+        if (a.startDate === null && b.startDate === null) return 0;
+        if (a.startDate === null) return -1;
+        if (b.startDate === null) return 1;
+        return a.startDate.getTime() - b.startDate.getTime();
+      });
+      spouseMap.set(personId, spouseWithDates.map(s => s.spouse));
     }
 
     const ref = personMap.get(referencePersonId);
@@ -134,7 +165,6 @@ export class DualTreeService {
     let mother = refParents.find((p) => p.gender === 'female') ?? null;
 
     // 如果只找到一个父母，通过配偶关系推导另一个
-    // （处理只建了一方 parent_child 关系的情况）
     if (father && !mother) {
       const fatherSpouses = spouseMap.get(father.id) ?? [];
       mother = fatherSpouses.find((s) => s.gender === 'female') ?? null;
@@ -152,7 +182,7 @@ export class DualTreeService {
       ? this.buildAncestorChain(mother, 1, maxDepth, parentsMap, childrenMap, spouseMap, personMap, 'maternal', ref)
       : [];
 
-    // ── 5. 参考人的兄弟姐妹（共享父母推导）→ CollateralFamily[] ──
+    // ── 5. 参考人的兄弟姐妹 ──
     const siblingSet = new Set<string>();
     for (const parent of refParents) {
       const parentChildren = childrenMap.get(parent.id) ?? [];
@@ -169,15 +199,17 @@ export class DualTreeService {
         siblingsResult.push(this.buildCollateralFamily(sib, ref, 0, 'paternal', spouseMap, childrenMap, personMap));
       }
     }
+    siblingsResult.sort((a, b) => sortByBirthOrder(personMap.get(a.person.id), personMap.get(b.person.id)));
 
-    // ── 6. 参考人的子女（递归后代树） ──
+    // ── 6. 参考人的子女 ──
     const refChildren = childrenMap.get(referencePersonId) ?? [];
+    const sortedChildren = [...refChildren].sort(sortByBirthOrder);
     const visited = new Set<string>([referencePersonId]);
-    const childrenResult: DescendantNode[] = refChildren.map((c) =>
+    const childrenResult: DescendantNode[] = sortedChildren.map((c) =>
       this.buildDescendantTree(c, ref, 1, 'paternal', 10, spouseMap, childrenMap, personMap, visited)
     );
 
-    // ── 7. 参考人的配偶 → SpouseFamily[] ──
+    // ── 7. 参考人的配偶 ──
     const refSpouses = spouseMap.get(referencePersonId) ?? [];
     const spousesResult: SpouseFamily[] = refSpouses.map((s) =>
       this.buildSpouseFamily(s, ref, parentsMap, childrenMap, spouseMap, personMap)
@@ -208,16 +240,20 @@ export class DualTreeService {
   ): DescendantNode {
     visited.add(person.id);
 
-    const spouses = spouseMap.get(person.id) ?? [];
-    const mainSpouse = spouses.length > 0 ? spouses[0] : null;
+    const allSpouses = spouseMap.get(person.id) ?? [];
+    const descendantPath = buildDescendantPath(generation);
+    const spousePath = descendantPath + '>spouse';
 
-    const title = this.getDescendantTitle(person, generation);
-    const spouseTitle = mainSpouse ? this.getDescendantSpouseTitle(mainSpouse, generation) : '';
+    const title = matchTitleWithFallback(descendantPath, person.gender, side, null, ref.gender);
+    const spouseNodes = allSpouses.map(sp =>
+      toNode(sp, matchTitleWithFallback(spousePath, sp.gender, side, null, ref.gender), 'affinity')
+    );
 
     let childDescendants: DescendantNode[] = [];
     if (generation < maxDescendantDepth) {
       const kids = childrenMap.get(person.id) ?? [];
-      childDescendants = kids
+      const sortedKids = [...kids].sort(sortByBirthOrder);
+      childDescendants = sortedKids
         .filter((k) => !visited.has(k.id))
         .map((k) =>
           this.buildDescendantTree(k, ref, generation + 1, side, maxDescendantDepth, spouseMap, childrenMap, personMap, visited)
@@ -226,7 +262,7 @@ export class DualTreeService {
 
     return {
       person: toNode(person, title, side),
-      spouse: mainSpouse ? toNode(mainSpouse, spouseTitle, 'affinity') : null,
+      spouses: spouseNodes,
       children: childDescendants,
     };
   }
@@ -246,13 +282,14 @@ export class DualTreeService {
   ): DescendantNode {
     visited.add(person.id);
 
-    const spouses = spouseMap.get(person.id) ?? [];
-    const mainSpouse = spouses.length > 0 ? spouses[0] : null;
+    const allSpouses = spouseMap.get(person.id) ?? [];
+    const spouseNodes = allSpouses.map(sp => toNode(sp, '配偶', side));
 
     let childDescendants: DescendantNode[] = [];
     if (generation < maxDepth) {
       const kids = childrenMap.get(person.id) ?? [];
-      childDescendants = kids
+      const sortedKids = [...kids].sort(sortByBirthOrder);
+      childDescendants = sortedKids
         .filter((k) => !visited.has(k.id))
         .map((k) => {
           const childTitle = k.gender === 'male' ? '子' : k.gender === 'female' ? '女' : '子女';
@@ -262,7 +299,7 @@ export class DualTreeService {
 
     return {
       person: toNode(person, title, side),
-      spouse: mainSpouse ? toNode(mainSpouse, '配偶', side) : null,
+      spouses: spouseNodes,
       children: childDescendants,
     };
   }
@@ -276,29 +313,36 @@ export class DualTreeService {
     side: 'paternal' | 'maternal',
     spouseMap: Map<string, PersonRow[]>,
     childrenMap: Map<string, PersonRow[]>,
-    _personMap: Map<string, PersonRow>,
+    personMap: Map<string, PersonRow>,
   ): CollateralFamily {
-    const title = ancestorGeneration === 0
-      ? this.getSiblingTitle(sib, ref)
-      : this.getAncestorSiblingTitle(sib, ancestorGeneration, side);
+    // 路径：ancestorGen=0 → 'sibling'，ancestorGen=1 → 'parent>sibling'，etc.
+    const pathStr = ancestorGeneration === 0
+      ? 'sibling'
+      : buildAncestorPath(ancestorGeneration) + '>sibling';
 
-    const sibSpouses = spouseMap.get(sib.id) ?? [];
-    const sibSpouse = sibSpouses.length > 0 ? sibSpouses[0] : null;
+    const elder = isElder(sib, ref);
+    const title = matchTitleWithFallback(pathStr, sib.gender, side, elder, ref.gender);
+
+    const allSibSpouses = spouseMap.get(sib.id) ?? [];
+    const spousePathStr = pathStr + '>spouse';
+    const spouseNodes = allSibSpouses.map(sp =>
+      toNode(sp, matchTitleWithFallback(spousePathStr, sp.gender, side, elder, ref.gender), side)
+    );
 
     const sibChildren = childrenMap.get(sib.id) ?? [];
+    const sortedSibChildren = [...sibChildren].sort(sortByBirthOrder);
     const visited = new Set<string>([sib.id]);
-    const childDescendants: DescendantNode[] = sibChildren
+    const childPathStr = pathStr + '>child';
+    const childDescendants: DescendantNode[] = sortedSibChildren
       .filter((c) => !visited.has(c.id))
       .map((c) => {
-        const childTitle = this.getCollateralChildTitle(c, ancestorGeneration, side);
-        return this.buildCollateralDescendantTree(c, 1, side, 10, spouseMap, childrenMap, _personMap, visited, childTitle);
+        const childTitle = matchTitleWithFallback(childPathStr, c.gender, side, null, ref.gender);
+        return this.buildCollateralDescendantTree(c, 1, side, 10, spouseMap, childrenMap, personMap, visited, childTitle);
       });
 
     return {
       person: toNode(sib, title, side),
-      spouse: sibSpouse
-        ? toNode(sibSpouse, this.getSiblingSpouseTitle(sibSpouse, sib, ancestorGeneration, side), side)
-        : null,
+      spouses: spouseNodes,
       children: childDescendants,
     };
   }
@@ -313,7 +357,7 @@ export class DualTreeService {
     spouseMap: Map<string, PersonRow[]>,
     personMap: Map<string, PersonRow>,
   ): SpouseFamily {
-    const spouseTitle = spouse.gender === 'male' ? '丈夫' : '妻子';
+    const spouseTitle = matchTitleWithFallback('spouse', spouse.gender, null, null, ref.gender);
 
     // 配偶的父母 → 构建完整祖先链
     const spouseParents = parentsMap.get(spouse.id) ?? [];
@@ -323,7 +367,7 @@ export class DualTreeService {
       ? this.buildAncestorChain(spouseFather, 1, 20, parentsMap, childrenMap, spouseMap, personMap, 'paternal', ref, true)
       : [];
 
-    // 配偶的兄弟姐妹（通过配偶的父母推导）
+    // 配偶的兄弟姐妹
     const spouseSiblingSet = new Set<string>();
     for (const parent of spouseParents) {
       const parentChildren = childrenMap.get(parent.id) ?? [];
@@ -337,9 +381,12 @@ export class DualTreeService {
     for (const sibId of spouseSiblingSet) {
       const sib = personMap.get(sibId);
       if (sib) {
-        const sibTitle = this.getInLawSiblingTitle(sib, ref);
-        const sibSpouses = spouseMap.get(sib.id) ?? [];
-        const sibSpouse = sibSpouses.length > 0 ? sibSpouses[0] : null;
+        const sibElder = isElder(sib, spouse);
+        const sibTitle = matchTitleWithFallback('spouse>sibling', sib.gender, null, sibElder, ref.gender);
+        const allSibSpouses = spouseMap.get(sib.id) ?? [];
+        const sibSpouseNodes = allSibSpouses.map(sp =>
+          toNode(sp, matchTitleWithFallback('spouse>sibling>spouse', sp.gender, null, null, ref.gender), 'affinity')
+        );
         const sibChildren = childrenMap.get(sib.id) ?? [];
         const sibVisited = new Set<string>([sib.id]);
         const sibChildDescendants: DescendantNode[] = sibChildren
@@ -347,7 +394,7 @@ export class DualTreeService {
           .map((c) => this.buildCollateralDescendantTree(c, 1, 'affinity', 10, spouseMap, childrenMap, personMap, sibVisited, '子女'));
         siblingFamilies.push({
           person: toNode(sib, sibTitle, 'affinity'),
-          spouse: sibSpouse ? toNode(sibSpouse, '配偶', 'affinity') : null,
+          spouses: sibSpouseNodes,
           children: sibChildDescendants,
         });
       }
@@ -380,9 +427,25 @@ export class DualTreeService {
     let gen = generation;
 
     while (current && gen <= maxDepth) {
-      // 配偶
-      const spouses = spouseMap.get(current.id) ?? [];
-      const mainSpouse = spouses.length > 0 ? spouses[0] : null;
+      const ancestorPath = buildAncestorPath(gen);
+      // 配偶祖先链使用 'spouse>parent>...' 路径
+      const titlePath = forSpouse ? 'spouse>' + ancestorPath : ancestorPath;
+
+      const nodeSide: Side = forSpouse ? 'affinity' : side;
+      const titleSide = forSpouse ? null : side;
+
+      // 祖先称谓
+      const title = matchTitleWithFallback(titlePath, current.gender, titleSide, null, ref.gender);
+      // 深层配偶祖先的称谓兜底
+      const ancestorTitle = forSpouse ? spouseAncestorFallback(title, gen, current.gender, ref.gender) : title;
+
+      // 全部配偶
+      const allSpouses = spouseMap.get(current.id) ?? [];
+      const spouseNodes = allSpouses.map(sp => {
+        let spTitle = matchTitleWithFallback(titlePath, sp.gender, titleSide, null, ref.gender);
+        if (forSpouse) spTitle = spouseAncestorFallback(spTitle, gen, sp.gender, ref.gender);
+        return toNode(sp, spTitle, nodeSide);
+      });
 
       // 兄弟姐妹 → CollateralFamily[]
       const currentParents = parentsMap.get(current.id) ?? [];
@@ -403,13 +466,15 @@ export class DualTreeService {
         }
       }
 
-      // 配偶的父母和兄弟姐妹
+      // 第一个配偶的父母和兄弟姐妹
+      const mainSpouse = allSpouses.length > 0 ? allSpouses[0] : null;
       let spouseParentNodes: PersonNode[] = [];
       let spouseSiblingFamilies: CollateralFamily[] = [];
       if (mainSpouse) {
+        const mainSpouseTitle = matchTitleWithFallback(titlePath, mainSpouse.gender, titleSide, null, ref.gender);
         const spParents = parentsMap.get(mainSpouse.id) ?? [];
         spouseParentNodes = spParents.map((p) =>
-          toNode(p, this.getAncestorSpouseParentTitle(p, gen, side), side)
+          toNode(p, `${mainSpouseTitle}的${p.gender === 'male' ? '父亲' : '母亲'}`, nodeSide)
         );
 
         const spSibSet = new Set<string>();
@@ -431,225 +496,27 @@ export class DualTreeService {
         }
       }
 
-      const nodeSide: Side = forSpouse ? 'affinity' : side;
-      const title = forSpouse
-        ? this.getSpouseAncestorTitle(current, gen, side, ref)
-        : this.getAncestorTitle(current, gen, side);
-      const spouseTitle = mainSpouse
-        ? (forSpouse
-            ? this.getSpouseAncestorSpouseTitle(mainSpouse, gen, side, ref)
-            : this.getAncestorSpouseTitle(mainSpouse, gen, side))
-        : '';
       result.push({
-        ancestor: toNode(current, title, nodeSide),
-        spouse: mainSpouse ? toNode(mainSpouse, spouseTitle, nodeSide) : null,
+        ancestor: toNode(current, ancestorTitle, nodeSide),
+        spouses: spouseNodes,
         siblings,
         spouseParents: spouseParentNodes,
         spouseSiblings: spouseSiblingFamilies,
         generation: gen,
       });
 
-      // 继续向上追溯
+      // 向上追溯：父系和母系均沿男性向上
+      // 修复：原代码母系沿女性追溯（母亲→外婆→外婆的母亲），
+      // 正确路径：母亲→外公→外曾祖父→外高祖父→…
       const nextParents: PersonRow[] = parentsMap.get(current.id) ?? [];
       const nextAncestor: PersonRow | null =
-        side === 'paternal'
-          ? nextParents.find((p: PersonRow) => p.gender === 'male') ?? nextParents[0] ?? null
-          : nextParents.find((p: PersonRow) => p.gender === 'female') ?? nextParents[0] ?? null;
+        nextParents.find((p: PersonRow) => p.gender === 'male') ?? nextParents[0] ?? null;
 
       current = nextAncestor ?? null;
       gen++;
     }
 
     return result;
-  }
-
-  // ── 称谓辅助方法 ──
-
-  private getAncestorTitle(person: PersonRow, generation: number, side: 'paternal' | 'maternal'): string {
-    if (side === 'paternal') {
-      switch (generation) {
-        case 1: return person.gender === 'male' ? '父亲' : '母亲';
-        case 2: return person.gender === 'male' ? '爷爷' : '奶奶';
-        case 3: return person.gender === 'male' ? '曾祖父' : '曾祖母';
-        case 4: return person.gender === 'male' ? '高祖父' : '高祖母';
-        default: return `${generation}世祖`;
-      }
-    } else {
-      switch (generation) {
-        case 1: return person.gender === 'male' ? '父亲' : '母亲';
-        case 2: return person.gender === 'male' ? '外公' : '外婆';
-        case 3: return person.gender === 'male' ? '外曾祖父' : '外曾祖母';
-        case 4: return person.gender === 'male' ? '外高祖父' : '外高祖母';
-        default: return `外${generation}世祖`;
-      }
-    }
-  }
-
-  private getAncestorSpouseTitle(person: PersonRow, generation: number, side: 'paternal' | 'maternal'): string {
-    if (side === 'paternal') {
-      switch (generation) {
-        case 1: return person.gender === 'female' ? '母亲' : '父亲';
-        case 2: return person.gender === 'female' ? '奶奶' : '爷爷';
-        case 3: return person.gender === 'female' ? '曾祖母' : '曾祖父';
-        default: return `${generation}世祖配偶`;
-      }
-    } else {
-      switch (generation) {
-        case 1: return person.gender === 'female' ? '母亲' : '父亲';
-        case 2: return person.gender === 'female' ? '外婆' : '外公';
-        case 3: return person.gender === 'female' ? '外曾祖母' : '外曾祖父';
-        default: return `外${generation}世祖配偶`;
-      }
-    }
-  }
-
-  private getAncestorSpouseParentTitle(parent: PersonRow, generation: number, side: 'paternal' | 'maternal'): string {
-    // 例：gen=2 paternal，配偶=奶奶，奶奶的父亲=奶奶的爹
-    if (generation === 1) {
-      // 父亲的妻子(母亲)的父母 → 外公/外婆 (这个分支不太会触发，因为gen=1的配偶就是母亲本人)
-      return parent.gender === 'male' ? '外公' : '外婆';
-    }
-    if (generation === 2) {
-      if (side === 'paternal') {
-        // 爷爷的妻子(奶奶)的父母
-        return parent.gender === 'male' ? '奶奶的父亲' : '奶奶的母亲';
-      } else {
-        // 外婆的丈夫(外公)的父母
-        return parent.gender === 'male' ? '外公的父亲' : '外公的母亲';
-      }
-    }
-    return '配偶方长辈';
-  }
-
-  private getAncestorSiblingTitle(person: PersonRow, ancestorGeneration: number, side: 'paternal' | 'maternal'): string {
-    if (ancestorGeneration === 1) {
-      if (side === 'paternal') {
-        return person.gender === 'male' ? '叔伯' : '姑姑';
-      } else {
-        return person.gender === 'male' ? '舅舅' : '姨妈';
-      }
-    }
-    if (ancestorGeneration === 2) {
-      if (side === 'paternal') {
-        return person.gender === 'male' ? '叔公/伯公' : '姑婆';
-      } else {
-        return person.gender === 'male' ? '舅公' : '姨婆';
-      }
-    }
-    return '远亲长辈';
-  }
-
-  private getSiblingTitle(sibling: PersonRow, reference: PersonRow): string {
-    const sibBirth = sibling.birth_date?.getTime() ?? 0;
-    const refBirth = reference.birth_date?.getTime() ?? 0;
-    const isElder = sibBirth < refBirth;
-
-    if (sibling.gender === 'male') {
-      return isElder ? '哥哥' : '弟弟';
-    } else if (sibling.gender === 'female') {
-      return isElder ? '姐姐' : '妹妹';
-    }
-    return '兄弟姐妹';
-  }
-
-  // ── 新增称谓方法 ──
-
-  private getSpouseAncestorTitle(person: PersonRow, gen: number, _side: 'paternal' | 'maternal', ref: PersonRow): string {
-    if (ref.gender === 'male') {
-      // 妻子的祖先
-      switch (gen) {
-        case 1: return person.gender === 'male' ? '岳父' : '岳母';
-        case 2: return person.gender === 'male' ? '岳祖父' : '岳祖母';
-        case 3: return person.gender === 'male' ? '岳曾祖父' : '岳曾祖母';
-        default: return `岳${gen}世祖`;
-      }
-    } else {
-      // 丈夫的祖先
-      switch (gen) {
-        case 1: return person.gender === 'male' ? '公公' : '婆婆';
-        case 2: return person.gender === 'male' ? '太公' : '太婆';
-        case 3: return person.gender === 'male' ? '太太公' : '太太婆';
-        default: return `夫方${gen}世祖`;
-      }
-    }
-  }
-
-  private getSpouseAncestorSpouseTitle(spouse: PersonRow, gen: number, _side: 'paternal' | 'maternal', ref: PersonRow): string {
-    if (ref.gender === 'male') {
-      switch (gen) {
-        case 1: return spouse.gender === 'female' ? '岳母' : '岳父';
-        case 2: return spouse.gender === 'female' ? '岳祖母' : '岳祖父';
-        default: return `岳${gen}世祖配偶`;
-      }
-    } else {
-      switch (gen) {
-        case 1: return spouse.gender === 'female' ? '婆婆' : '公公';
-        case 2: return spouse.gender === 'female' ? '太婆' : '太公';
-        default: return `夫方${gen}世祖配偶`;
-      }
-    }
-  }
-
-
-
-  private getInLawSiblingTitle(sib: PersonRow, ref: PersonRow): string {
-    if (ref.gender === 'male') {
-      return sib.gender === 'male' ? '小舅子' : '小姨子';
-    } else {
-      return sib.gender === 'male' ? '小叔子' : '小姑子';
-    }
-  }
-
-  private getSiblingSpouseTitle(sp: PersonRow, sib: PersonRow, ancestorGeneration: number, side: 'paternal' | 'maternal'): string {
-    if (ancestorGeneration === 0) {
-      // 参考人兄弟的配偶
-      if (sib.gender === 'male') {
-        return sp.gender === 'female' ? '嫂子/弟妹' : '配偶';
-      } else {
-        return sp.gender === 'male' ? '姐夫/妹夫' : '配偶';
-      }
-    }
-    if (ancestorGeneration === 1) {
-      if (side === 'paternal') {
-        return sp.gender === 'female' ? '婶婶/伯母' : '姑父';
-      } else {
-        return sp.gender === 'female' ? '舅妈' : '姨父';
-      }
-    }
-    return '配偶';
-  }
-
-  private getDescendantTitle(person: PersonRow, generation: number): string {
-    switch (generation) {
-      case 1: return person.gender === 'male' ? '儿子' : person.gender === 'female' ? '女儿' : '子女';
-      case 2: return person.gender === 'male' ? '孙子' : person.gender === 'female' ? '孙女' : '孙辈';
-      case 3: return person.gender === 'male' ? '曾孙' : person.gender === 'female' ? '曾孙女' : '曾孙辈';
-      case 4: return person.gender === 'male' ? '玄孙' : person.gender === 'female' ? '玄孙女' : '玄孙辈';
-      default: return `${generation}世孙`;
-    }
-  }
-
-  private getDescendantSpouseTitle(spouse: PersonRow, generation: number): string {
-    switch (generation) {
-      case 1: return spouse.gender === 'female' ? '儿媳' : '女婿';
-      case 2: return spouse.gender === 'female' ? '孙媳' : '孙女婿';
-      default: return '配偶';
-    }
-  }
-
-  private getCollateralChildTitle(child: PersonRow, ancestorGeneration: number, side: 'paternal' | 'maternal'): string {
-    if (ancestorGeneration === 0) {
-      // 参考人兄弟的子女
-      return child.gender === 'male' ? '侄子' : '侄女';
-    }
-    if (ancestorGeneration === 1) {
-      if (side === 'paternal') {
-        return child.gender === 'male' ? '堂兄弟' : '堂姐妹';
-      } else {
-        return child.gender === 'male' ? '表兄弟' : '表姐妹';
-      }
-    }
-    return '远亲';
   }
 }
 
@@ -662,6 +529,9 @@ function toNode(person: PersonRow, title: string, side: Side): PersonNode {
     gender: person.gender,
     birth_date: person.birth_date ? person.birth_date.toISOString().split('T')[0] : null,
     death_date: person.death_date ? person.death_date.toISOString().split('T')[0] : null,
+    photo_url: person.photo_url ?? null,
+    birth_order: person.birth_order ?? null,
+    native_place: person.native_place ?? null,
     title,
     side,
   };
@@ -673,6 +543,47 @@ function pushTo<T>(map: Map<string, T[]>, key: string, value: T): void {
     list.push(value);
   } else {
     map.set(key, [value]);
+  }
+}
+
+/** pushTo with deduplication by id (for spouse bidirectional entries) */
+function pushToUnique(map: Map<string, PersonRow[]>, key: string, value: PersonRow): void {
+  const list = map.get(key);
+  if (list) {
+    if (!list.some(p => p.id === value.id)) {
+      list.push(value);
+    }
+  } else {
+    map.set(key, [value]);
+  }
+}
+
+/** Compare two persons for ordering: birth_order → birth_date → name */
+function sortByBirthOrder(a: PersonRow | undefined, b: PersonRow | undefined): number {
+  if (!a || !b) return 0;
+  if (a.birth_order !== null && b.birth_order !== null) return a.birth_order - b.birth_order;
+  if (a.birth_order !== null) return -1;
+  if (b.birth_order !== null) return 1;
+  if (a.birth_date && b.birth_date) return a.birth_date.getTime() - b.birth_date.getTime();
+  if (a.birth_date) return -1;
+  if (b.birth_date) return 1;
+  return a.name.localeCompare(b.name);
+}
+
+/** Determine if person A is elder than person B */
+function isElder(a: PersonRow, b: PersonRow): boolean | null {
+  if (a.birth_date && b.birth_date) return a.birth_date.getTime() < b.birth_date.getTime();
+  if (a.birth_order !== null && b.birth_order !== null) return a.birth_order < b.birth_order;
+  return null;
+}
+
+/** 深层配偶祖先称谓兜底（规则表仅覆盖 2 代，更深层用此函数） */
+function spouseAncestorFallback(matchedTitle: string, gen: number, gender: Gender, refGender: Gender): string {
+  if (matchedTitle !== '姻亲' && matchedTitle !== '亲属') return matchedTitle;
+  if (refGender === 'male') {
+    return gender === 'male' ? `岳${gen}世祖` : `岳${gen}世祖母`;
+  } else {
+    return gender === 'male' ? `夫方${gen}世祖` : `夫方${gen}世祖母`;
   }
 }
 

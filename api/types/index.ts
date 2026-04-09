@@ -40,9 +40,23 @@ export interface Family {
   name: string;
   description: string | null;
   root_person_id: UUID | null;
+  generation_name: string | null;
+  hall_name: string | null;
   created_at: Date;
   updated_at: Date;
   created_by: string | null;
+}
+
+export type UserRole = 'admin' | 'editor' | 'member' | 'viewer';
+
+export interface User {
+  id: UUID;
+  username: string;
+  password_hash: string;
+  display_name: string | null;
+  role: UserRole;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface FamilyListItem extends Family {
@@ -57,6 +71,9 @@ export interface Person {
   birth_date: Date | null;
   death_date: Date | null;
   bio: string | null;
+  photo_url: string | null;
+  birth_order: number | null;
+  native_place: string | null;
   created_at: Date;
   updated_at: Date;
   created_by: string | null;
@@ -71,6 +88,9 @@ export interface PersonVersion {
   birth_date: Date | null;
   death_date: Date | null;
   bio: string | null;
+  photo_url: string | null;
+  birth_order: number | null;
+  native_place: string | null;
   valid_from: Date;
   valid_to: Date | null;
   changed_by: string | null;

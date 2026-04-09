@@ -28,7 +28,8 @@ interface ImportTask {
   };
 }
 
-const importTasks = new Map<string, ImportTask>();
+// In-memory map for active processing only; completed jobs are in the DB
+const activeTasks = new Map<string, ImportTask>();
 
 export class ImportService {
   async createImportJob(
@@ -42,6 +43,14 @@ export class ImportService {
 
     const records = this.parseFile(file_buffer, file_type);
     const job_id = randomUUID();
+
+    // Persist to DB
+    await query(
+      `INSERT INTO import_jobs (id, family_id, status, file_name, total, options, created_by)
+       VALUES ($1, $2, 'pending', $3, $4, $5, $6)`,
+      [job_id, family_id, `import_${Date.now()}.${file_type}`, records.length, JSON.stringify(options), created_by]
+    );
+
     const task: ImportTask = {
       job_id,
       status: 'pending',
@@ -59,7 +68,7 @@ export class ImportService {
       },
     };
 
-    importTasks.set(job_id, task);
+    activeTasks.set(job_id, task);
 
     if (options.transaction_mode !== 'dry_run') {
       setImmediate(() => {
@@ -71,33 +80,70 @@ export class ImportService {
   }
 
   async getImportJob(job_id: string): Promise<ImportJob | null> {
-    const task = importTasks.get(job_id);
-    return task ? this.buildImportJob(task) : null;
+    // Check active tasks first (real-time progress)
+    const active = activeTasks.get(job_id);
+    if (active) {
+      return this.buildImportJob(active);
+    }
+
+    // Fall back to DB for completed/historical jobs
+    const result = await query<{
+      id: string;
+      status: ImportJobStatus;
+      total: number;
+      processed: number;
+      succeeded: number;
+      failed: number;
+      errors: ImportErrorItem[];
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      'SELECT id, status, total, processed, succeeded, failed, errors, created_at, updated_at FROM import_jobs WHERE id = $1',
+      [job_id]
+    );
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      status: row.status,
+      summary: {
+        total: row.total,
+        processed: row.processed,
+        succeeded: row.succeeded,
+        failed: row.failed,
+      },
+      errors: row.errors ?? [],
+      checkpoint: null,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
   }
 
   async cancelImportJob(job_id: string): Promise<boolean> {
-    const task = importTasks.get(job_id);
+    const task = activeTasks.get(job_id);
     if (!task || task.status === 'completed' || task.status === 'failed') {
       return false;
     }
 
     task.status = 'failed';
     task.updated_at = new Date();
+    await this.syncJobToDb(task);
     return true;
   }
 
   private async processImportJob(job_id: string): Promise<void> {
-    const task = importTasks.get(job_id);
-    if (!task) {
-      return;
-    }
+    const task = activeTasks.get(job_id);
+    if (!task) return;
 
     task.status = 'processing';
     task.updated_at = new Date();
+    await this.syncJobToDb(task);
 
     try {
       for (let index = 0; index < task.records.length; index += 1) {
-        if (importTasks.get(job_id)?.status === 'failed') {
+        if (activeTasks.get(job_id)?.status === 'failed') {
           return;
         }
 
@@ -123,6 +169,11 @@ export class ImportService {
             throw error;
           }
         }
+
+        // Periodic DB sync every 50 records
+        if (index % 50 === 0) {
+          await this.syncJobToDb(task);
+        }
       }
 
       await this.createRelationships(task);
@@ -140,6 +191,30 @@ export class ImportService {
         });
       }
     }
+
+    // Final DB sync and cleanup
+    await this.syncJobToDb(task);
+    activeTasks.delete(job_id);
+  }
+
+  private async syncJobToDb(task: ImportTask): Promise<void> {
+    try {
+      await query(
+        `UPDATE import_jobs
+         SET status = $1, processed = $2, succeeded = $3, failed = $4, errors = $5, updated_at = NOW()
+         WHERE id = $6`,
+        [
+          task.status,
+          task.current_index,
+          task.results.succeeded.length,
+          task.results.failed.length,
+          JSON.stringify(task.results.failed),
+          task.job_id,
+        ]
+      );
+    } catch {
+      // Don't let DB sync failures break the import
+    }
   }
 
   private async upsertPerson(
@@ -154,13 +229,7 @@ export class ImportService {
 
     if (options.skip_duplicates) {
       const existing = await query<{ id: string }>(
-        `
-          SELECT id
-          FROM persons
-          WHERE family_id = $1
-            AND name = $2
-          LIMIT 1
-        `,
+        `SELECT id FROM persons WHERE family_id = $1 AND name = $2 LIMIT 1`,
         [family_id, record.name.trim()]
       );
 
@@ -189,9 +258,7 @@ export class ImportService {
 
     for (const record of task.records) {
       const person_id = record.id ? task.results.persons.get(record.id) : undefined;
-      if (!person_id) {
-        continue;
-      }
+      if (!person_id) continue;
 
       const parentLinks: Array<{ parent_ref?: string; subtype: 'father' | 'mother' }> = [
         { parent_ref: record.father_id, subtype: 'father' },
@@ -199,14 +266,9 @@ export class ImportService {
       ];
 
       for (const link of parentLinks) {
-        if (!link.parent_ref) {
-          continue;
-        }
-
+        if (!link.parent_ref) continue;
         const parent_id = task.results.persons.get(link.parent_ref);
-        if (!parent_id) {
-          continue;
-        }
+        if (!parent_id) continue;
 
         await relationshipService.createRelationship(
           {
@@ -221,14 +283,10 @@ export class ImportService {
 
       if (record.spouse_id) {
         const spouse_id = task.results.persons.get(record.spouse_id);
-        if (!spouse_id) {
-          continue;
-        }
+        if (!spouse_id) continue;
 
         const key = [person_id, spouse_id].sort().join(':');
-        if (spousePairs.has(key)) {
-          continue;
-        }
+        if (spousePairs.has(key)) continue;
 
         spousePairs.add(key);
         await relationshipService.createRelationship(
@@ -298,12 +356,8 @@ export class ImportService {
 
   private normalizeGender(value?: string): 'male' | 'female' | 'unknown' {
     const normalized = (value || '').trim().toLowerCase();
-    if (normalized === 'male' || normalized === 'm') {
-      return 'male';
-    }
-    if (normalized === 'female' || normalized === 'f') {
-      return 'female';
-    }
+    if (normalized === 'male' || normalized === 'm') return 'male';
+    if (normalized === 'female' || normalized === 'f') return 'female';
     return 'unknown';
   }
 

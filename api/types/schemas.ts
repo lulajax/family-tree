@@ -48,6 +48,9 @@ export const CreatePersonSchema = z.object({
   birth_date: OptionalDateSchema,
   death_date: OptionalDateSchema,
   bio: z.string().max(5000, '简介过长').optional(),
+  photo_url: z.string().url().max(500).optional(),
+  birth_order: z.number().int().min(1).optional(),
+  native_place: z.string().max(200).optional(),
 });
 
 export const UpdatePersonSchema = z.object({
@@ -56,6 +59,9 @@ export const UpdatePersonSchema = z.object({
   birth_date: OptionalDateSchema,
   death_date: OptionalDateSchema,
   bio: z.string().max(5000).optional(),
+  photo_url: z.string().url().max(500).optional().nullable(),
+  birth_order: z.number().int().min(1).optional().nullable(),
+  native_place: z.string().max(200).optional().nullable(),
   change_reason: z.string().max(500).optional(),
 });
 
@@ -131,12 +137,16 @@ export const CreateFamilySchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(2000).optional(),
   root_person_id: UuidSchema.optional(),
+  generation_name: z.string().max(1000).optional(),
+  hall_name: z.string().max(100).optional(),
 });
 
 export const UpdateFamilySchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(2000).optional(),
   root_person_id: UuidSchema.optional(),
+  generation_name: z.string().max(1000).optional().nullable(),
+  hall_name: z.string().max(100).optional().nullable(),
 });
 
 // ==================== 系别判定Schema ====================
@@ -166,6 +176,21 @@ export const ImportRecordSchema = z.object({
   mother_id: z.string().optional(),
   spouse_id: z.string().optional(),
 }).passthrough();
+
+// ==================== 认证Schema ====================
+
+export const UserRoleSchema = z.enum(['admin', 'editor', 'member', 'viewer']);
+
+export const RegisterSchema = z.object({
+  username: z.string().min(3, '用户名至少3个字符').max(100),
+  password: z.string().min(6, '密码至少6个字符').max(128),
+  display_name: z.string().max(100).optional(),
+});
+
+export const LoginSchema = z.object({
+  username: z.string().min(1, '用户名不能为空'),
+  password: z.string().min(1, '密码不能为空'),
+});
 
 // ==================== 类型导出 ====================
 

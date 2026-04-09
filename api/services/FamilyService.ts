@@ -14,17 +14,20 @@ export class FamilyService {
     name: string,
     description?: string,
     root_person_id?: string,
-    created_by = 'system'
+    created_by = 'system',
+    generation_name?: string,
+    hall_name?: string,
   ): Promise<Family> {
     const result = await query<Family>(
       `
         INSERT INTO families (
-          name, description, root_person_id, created_at, updated_at, created_by
+          name, description, root_person_id, generation_name, hall_name,
+          created_at, updated_at, created_by
         )
-        VALUES ($1, $2, $3, NOW(), NOW(), $4)
+        VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6)
         RETURNING *
       `,
-      [name, description ?? null, root_person_id ?? null, created_by]
+      [name, description ?? null, root_person_id ?? null, generation_name ?? null, hall_name ?? null, created_by]
     );
 
     return result.rows[0];
@@ -86,6 +89,8 @@ export class FamilyService {
       name?: string;
       description?: string;
       root_person_id?: string;
+      generation_name?: string | null;
+      hall_name?: string | null;
     }
   ): Promise<Family> {
     const result = await query<Family>(
@@ -95,14 +100,18 @@ export class FamilyService {
           name = COALESCE($1, name),
           description = COALESCE($2, description),
           root_person_id = COALESCE($3, root_person_id),
+          generation_name = COALESCE($4, generation_name),
+          hall_name = COALESCE($5, hall_name),
           updated_at = NOW()
-        WHERE id = $4
+        WHERE id = $6
         RETURNING *
       `,
       [
         updates.name ?? null,
         updates.description ?? null,
         updates.root_person_id ?? null,
+        updates.generation_name !== undefined ? updates.generation_name : null,
+        updates.hall_name !== undefined ? updates.hall_name : null,
         family_id,
       ]
     );

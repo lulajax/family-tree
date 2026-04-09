@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { PersonNode } from '../../types';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 import { PersonEditDialog } from './PersonEditDialog';
+import { useUploadPhoto } from '../../api/mutations';
 
 const GENDER_COLORS = {
   male: { bg: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
@@ -74,6 +75,8 @@ export const PersonDetailPanel: React.FC<PersonDetailPanelProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const uploadPhoto = useUploadPhoto();
 
   return (
     <div className="flex flex-col h-full">
@@ -81,10 +84,41 @@ export const PersonDetailPanel: React.FC<PersonDetailPanelProps> = ({
       <div className={`${colors.light} border-b ${colors.border}`}>
         <div className="flex items-start justify-between p-4">
           <div className="flex items-center gap-3">
-            <div
-              className={`w-14 h-14 ${colors.bg} rounded-full flex items-center justify-center text-white text-xl font-bold shadow`}
-            >
-              {person.name.charAt(0)}
+            <div className="relative group">
+              {person.photo_url ? (
+                <img
+                  src={person.photo_url}
+                  alt={person.name}
+                  className="w-14 h-14 rounded-full object-cover shadow border-2 border-white"
+                />
+              ) : (
+                <div
+                  className={`w-14 h-14 ${colors.bg} rounded-full flex items-center justify-center text-white text-xl font-bold shadow`}
+                >
+                  {person.name.charAt(0)}
+                </div>
+              )}
+              {/* Photo upload overlay */}
+              <button
+                onClick={() => photoInputRef.current?.click()}
+                className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                title="上传照片"
+              >
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) uploadPhoto.mutate({ personId: person.id, file });
+                }}
+              />
             </div>
             <div>
               <h2 className="text-lg font-bold text-slate-800">
@@ -304,6 +338,18 @@ export const PersonDetailPanel: React.FC<PersonDetailPanelProps> = ({
               <div className="flex justify-between">
                 <dt className="text-slate-500">称谓</dt>
                 <dd className="text-amber-700 font-medium">{person.title}</dd>
+              </div>
+            )}
+            {person.native_place && (
+              <div className="flex justify-between">
+                <dt className="text-slate-500">籍贯</dt>
+                <dd className="text-slate-800">{person.native_place}</dd>
+              </div>
+            )}
+            {person.birth_order != null && (
+              <div className="flex justify-between">
+                <dt className="text-slate-500">排行</dt>
+                <dd className="text-slate-800">第 {person.birth_order} 位</dd>
               </div>
             )}
           </dl>

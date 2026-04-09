@@ -8,6 +8,7 @@ dotenv.config();
 import compression from 'compression';
 import cors from 'cors';
 import express, { Application, Request, Response } from 'express';
+import path from 'path';
 import helmet from 'helmet';
 import hpp from 'hpp';
 import morgan from 'morgan';
@@ -99,6 +100,10 @@ app.get('/live', (_req: Request, res: Response) => {
     uptime: process.uptime(),
   });
 });
+
+// Static file serving for uploads (photos etc.)
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
+app.use('/uploads', express.static(UPLOAD_DIR));
 
 app.use(API_PREFIX, apiRoutes);
 
