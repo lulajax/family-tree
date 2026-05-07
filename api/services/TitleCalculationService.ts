@@ -1,5 +1,5 @@
 import { query } from '../config/database';
-import { Gender, Person, Side, TitleResult } from '../types';
+import { Gender, Person, TitleResult } from '../types';
 import { NotFoundError } from '../utils/errors';
 import { sideCalculationService } from './SideCalculationService';
 import { matchTitleWithFallback, getReverseTitle } from './titleRules';

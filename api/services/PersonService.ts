@@ -565,7 +565,6 @@ export class PersonService {
         'SELECT * FROM persons WHERE id = $1', [targetPersonId]
       );
       if (targetResult.rows.length === 0) throw new NotFoundError('人员', targetPersonId);
-      const targetPerson = targetResult.rows[0];
 
       const now = new Date();
       const createdRelationships: Relationship[] = [];

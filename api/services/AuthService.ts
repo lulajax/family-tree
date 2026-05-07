@@ -1,11 +1,10 @@
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { query } from '../config/database';
 import { User, UserRole } from '../types';
 import { ConflictError, UnauthorizedError } from '../utils/errors';
 
 const JWT_SECRET = process.env.JWT_SECRET || '';
 const JWT_EXPIRES_IN = parseInt(process.env.JWT_EXPIRES_IN || '86400', 10); // 24h default
-const BCRYPT_ROUNDS = 12;
 
 interface TokenPayload {
   sub: string;
@@ -38,6 +37,17 @@ function verifyPassword(password: string, storedHash: string): boolean {
 function makePasswordHash(password: string): string {
   const { hash, salt } = hashPassword(password);
   return `${salt}:${hash}`;
+}
+
+function omitPasswordHash(user: User): Omit<User, 'password_hash'> {
+  return {
+    id: user.id,
+    username: user.username,
+    display_name: user.display_name,
+    role: user.role,
+    created_at: user.created_at,
+    updated_at: user.updated_at,
+  };
 }
 
 // Lightweight JWT using Node.js built-in crypto (no jsonwebtoken dependency)
@@ -113,7 +123,7 @@ export class AuthService {
     const tokens = this.generateTokens(user);
 
     return {
-      user: { ...user, password_hash: '' },
+      user: omitPasswordHash(user),
       tokens,
     };
   }
@@ -136,7 +146,7 @@ export class AuthService {
     const tokens = this.generateTokens(user);
 
     return {
-      user: { ...user, password_hash: '' },
+      user: omitPasswordHash(user),
       tokens,
     };
   }
