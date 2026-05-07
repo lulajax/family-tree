@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from './client';
-import type { Family, Person, DualTreeResponse } from '../types';
+import type { Family, Person, DualTreeResponse, RelationshipExplanation } from '../types';
 
 // ── Search result types ──
 
@@ -63,6 +63,23 @@ export function usePerson(personId: string | null) {
     queryKey: ['person', personId],
     queryFn: () => apiClient<Person>(`/persons/${personId}`),
     enabled: !!personId,
+  });
+}
+
+export function useRelationshipExplanation(
+  targetPersonId: string | null,
+  referencePersonId: string | null,
+) {
+  return useQuery({
+    queryKey: ['relationshipExplanation', targetPersonId, referencePersonId],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        from: referencePersonId ?? '',
+        to: targetPersonId ?? '',
+      });
+      return apiClient<RelationshipExplanation>(`/calculate/explain?${params.toString()}`);
+    },
+    enabled: !!targetPersonId && !!referencePersonId && targetPersonId !== referencePersonId,
   });
 }
 

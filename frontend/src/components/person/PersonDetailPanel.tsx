@@ -3,6 +3,8 @@ import type { PersonNode } from '../../types';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 import { PersonEditDialog } from './PersonEditDialog';
 import { useUploadPhoto } from '../../api/mutations';
+import { useRelationshipExplanation } from '../../api/queries';
+import { KinshipCard } from '../kinship/KinshipCard';
 
 const GENDER_COLORS = {
   male: { bg: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
@@ -77,6 +79,38 @@ export const PersonDetailPanel: React.FC<PersonDetailPanelProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const uploadPhoto = useUploadPhoto();
+  const relationshipExplanation = useRelationshipExplanation(person.id, referencePersonId);
+  const kinshipCard = isReference
+    ? {
+        title: '本人',
+        reverseTitle: '本人',
+        side: 'self' as const,
+        distance: 0,
+        path: ['我'],
+        summary: '这是当前焦点人物。',
+      }
+    : relationshipExplanation.data
+      ? {
+          title: relationshipExplanation.data.title,
+          reverseTitle: relationshipExplanation.data.reverse_title,
+          side: relationshipExplanation.data.side,
+          distance: relationshipExplanation.data.distance,
+          path:
+            relationshipExplanation.data.human_readable_path.length > 0
+              ? relationshipExplanation.data.human_readable_path
+              : ['我', ...relationshipExplanation.data.relationship_path],
+          summary: relationshipExplanation.data.summary,
+        }
+      : person.title
+        ? {
+            title: person.title,
+            reverseTitle: undefined,
+            side: person.side,
+            distance: 0,
+            path: ['我', person.title],
+            summary: relationshipExplanation.isError ? '暂时无法计算详细关系路径，先显示图谱中的称谓。' : undefined,
+          }
+        : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -297,6 +331,19 @@ export const PersonDetailPanel: React.FC<PersonDetailPanelProps> = ({
             }}
           />
         )}
+
+        {kinshipCard && (
+          <KinshipCard
+            title={kinshipCard.title}
+            reverseTitle={kinshipCard.reverseTitle}
+            side={kinshipCard.side}
+            distance={kinshipCard.distance}
+            path={kinshipCard.path}
+            summary={kinshipCard.summary}
+            compact
+          />
+        )}
+
         <div className="bg-slate-50 rounded-xl p-4">
           <h3 className="text-sm font-semibold text-slate-700 mb-3">
             基本信息
