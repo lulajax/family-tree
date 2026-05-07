@@ -1,10 +1,42 @@
 import { query } from '../config/database';
-import { Gender, Person, TitleResult } from '../types';
+import { Gender, Person, RelationshipExplanation, TitleResult } from '../types';
 import { NotFoundError } from '../utils/errors';
 import { sideCalculationService } from './SideCalculationService';
 import { matchTitleWithFallback, getReverseTitle } from './titleRules';
 
 export class TitleCalculationService {
+  async calculateRelationshipExplanation(
+    reference_person_id: string,
+    target_person_id: string,
+    as_of?: string
+  ): Promise<RelationshipExplanation> {
+    const titleResult = await this.calculateTitle(reference_person_id, target_person_id, as_of);
+    const commonAncestor = await sideCalculationService.findCommonAncestor(reference_person_id, target_person_id);
+    const humanReadablePath = titleResult.relationship_path.map(toHumanReadableRelation);
+    const confidence = getTitleConfidence(titleResult.title);
+
+    return {
+      reference_person_id,
+      target_person_id,
+      title: titleResult.title,
+      reverse_title: titleResult.reverse_title,
+      side: titleResult.side,
+      distance: titleResult.distance,
+      relationship_path: titleResult.relationship_path,
+      human_readable_path: humanReadablePath,
+      summary: buildRelationshipSummary(titleResult.title, humanReadablePath),
+      confidence,
+      common_ancestor: commonAncestor
+        ? {
+            ancestor_id: commonAncestor.ancestor_id,
+            ancestor_name: commonAncestor.ancestor_name,
+            person1_generation: commonAncestor.person1_generation,
+            person2_generation: commonAncestor.person2_generation,
+          }
+        : null,
+    };
+  }
+
   async calculateTitle(
     from_person_id: string,
     to_person_id: string,
@@ -82,6 +114,32 @@ export class TitleCalculationService {
     }
     return result.rows[0];
   }
+}
+
+const RELATION_LABELS: Record<string, string> = {
+  self: '本人',
+  parent: '父母',
+  child: '子女',
+  spouse: '配偶',
+  sibling: '兄弟姐妹',
+};
+
+function toHumanReadableRelation(relation: string): string {
+  return RELATION_LABELS[relation] ?? relation;
+}
+
+function getTitleConfidence(title: string): RelationshipExplanation['confidence'] {
+  if (title === '未知关系') {
+    return 'unknown';
+  }
+  return title.includes('亲属') ? 'fallback' : 'exact';
+}
+
+function buildRelationshipSummary(title: string, humanReadablePath: string[]): string {
+  if (humanReadablePath.length === 0) {
+    return '这是你本人。';
+  }
+  return `你应该称呼 TA 为「${title}」。关系路径：你 → ${humanReadablePath.join(' → ')} → TA。`;
 }
 
 export const titleCalculationService = new TitleCalculationService();

@@ -199,6 +199,25 @@ export interface TitleResult {
   };
 }
 
+export interface RelationshipExplanation {
+  reference_person_id: UUID;
+  target_person_id: UUID;
+  title: string;
+  reverse_title: string;
+  side: Side;
+  distance: number;
+  relationship_path: string[];
+  human_readable_path: string[];
+  summary: string;
+  confidence: 'exact' | 'fallback' | 'unknown';
+  common_ancestor: {
+    ancestor_id: UUID;
+    ancestor_name: string;
+    person1_generation: number;
+    person2_generation: number;
+  } | null;
+}
+
 export interface CommonAncestorResult {
   ancestor_id: UUID;
   ancestor_name: string;

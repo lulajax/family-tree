@@ -7,6 +7,21 @@ import { successResponse } from '../utils/response';
 
 const router = Router();
 
+router.get('/explain', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const schema = z.object({
+      from: z.string().uuid(),
+      to: z.string().uuid(),
+      as_of: z.string().datetime().optional(),
+    });
+    const { from, to, as_of } = schema.parse(req.query);
+    const result = await titleCalculationService.calculateRelationshipExplanation(from, to, as_of);
+    successResponse(res, result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get(
   '/',
   validateQuery(CalculateTitleQuerySchema),
