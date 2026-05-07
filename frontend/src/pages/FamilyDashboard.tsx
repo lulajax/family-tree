@@ -146,6 +146,7 @@ export function FamilyDashboard() {
             <MobileTreeView
               dualTree={dualTree}
               onPersonClick={(p) => setSelectedPersonId(p.id)}
+              onSetReference={handleSetReference}
             />
           </div>
         )}
