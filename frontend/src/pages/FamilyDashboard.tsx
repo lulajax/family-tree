@@ -9,6 +9,7 @@ import { AddRelativeDialog } from '../components/person/AddRelativeDialog';
 import { FamilyHeader } from '../components/family/FamilyHeader';
 import { MobileTreeView } from '../components/mobile/MobileTreeView';
 import { BottomDrawer } from '../components/ui/BottomDrawer';
+import { QuickStartChecklist } from '../components/onboarding/QuickStartChecklist';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import type { PersonNode, DualTreeResponse, DescendantNode, CollateralFamily, Person } from '../types';
 
@@ -290,10 +291,12 @@ function FirstPersonCreator({ familyId, familyName }: { familyId: string; family
   };
 
   return (
-    <div className="flex items-center justify-center h-[calc(100vh-3.5rem)]">
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md mx-4">
-        <h2 className="text-xl font-bold text-gray-800 mb-2">添加第一位成员</h2>
-        <p className="text-sm text-gray-500 mb-6">为「{familyName}」添加第一位家族成员</p>
+    <div className="flex items-center justify-center min-h-[calc(100vh-3.5rem)] bg-slate-50 p-4">
+      <div className="grid w-full max-w-5xl gap-6 md:grid-cols-[1fr_360px]">
+        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+          <p className="text-sm font-semibold text-blue-600 mb-2">先添加“我”</p>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">为「{familyName}」设置中心人物</h2>
+          <p className="text-sm text-gray-500 mb-6">推荐先添加你自己。之后添加父母、配偶和亲戚时，系统会围绕“我”计算称谓。</p>
 
         <div className="space-y-4">
           <div>
@@ -327,9 +330,11 @@ function FirstPersonCreator({ familyId, familyName }: { familyId: string; family
           disabled={submitting || !name.trim()}
           className="mt-6 w-full py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
         >
-          {submitting ? '创建中...' : '创建并开始'}
+          {submitting ? '创建中...' : '创建“我”并开始'}
         </button>
-      </form>
+        </form>
+        <QuickStartChecklist completedSteps={[1]} compact />
+      </div>
     </div>
   );
 }

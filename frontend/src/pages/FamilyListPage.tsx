@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useFamilies } from '../api/queries';
 import { useCreateFamily } from '../api/mutations';
 import type { Family } from '../types';
+import { QuickStartChecklist } from '../components/onboarding/QuickStartChecklist';
 
 export function FamilyListPage() {
   const navigate = useNavigate();
@@ -62,16 +63,22 @@ export function FamilyListPage() {
       </div>
 
       {(!families || families.length === 0) && !showCreate ? (
-        <div className="text-center py-20">
-          <div className="text-gray-400 text-6xl mb-4">🏠</div>
-          <h2 className="text-xl font-medium text-gray-600 mb-2">还没有家族</h2>
-          <p className="text-gray-400 mb-6">创建一个家族开始记录族谱</p>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            创建第一个家族
-          </button>
+        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr] items-start py-10">
+          <div className="rounded-3xl bg-white p-8 shadow-sm border border-gray-100">
+            <div className="text-5xl mb-5">🌳</div>
+            <p className="text-sm font-semibold text-blue-600 mb-2">中文家庭称谓图谱</p>
+            <h2 className="text-2xl font-bold text-gray-900 mb-3">从“我”开始，搞清楚每一位亲戚该怎么称呼</h2>
+            <p className="text-gray-500 mb-6 leading-relaxed">
+              创建家庭空间后，你可以添加父母、配偶、子女和旁系亲属。系统会自动计算父系/母系/姻亲关系，点击任意亲戚即可看到称谓和关系路径。
+            </p>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-medium shadow-sm"
+            >
+              创建第一个家庭
+            </button>
+          </div>
+          <QuickStartChecklist />
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
