@@ -98,6 +98,25 @@ export interface DualTreeResponse {
   spouses: SpouseFamily[];
 }
 
+export interface RelationshipExplanation {
+  reference_person_id: string;
+  target_person_id: string;
+  title: string;
+  reverse_title: string;
+  side: Side;
+  distance: number;
+  relationship_path: string[];
+  human_readable_path: string[];
+  summary: string;
+  confidence: 'exact' | 'fallback' | 'unknown';
+  common_ancestor: {
+    ancestor_id: string;
+    ancestor_name: string;
+    person1_generation: number;
+    person2_generation: number;
+  } | null;
+}
+
 // ── D3 可视化用 ──
 
 export interface TreeNodeD3 {
