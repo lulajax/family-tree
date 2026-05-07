@@ -180,6 +180,21 @@ export const ImportRecordSchema = z.object({
 // ==================== 认证Schema ====================
 
 export const UserRoleSchema = z.enum(['admin', 'editor', 'member', 'viewer']);
+export const FamilyCollaborationRoleSchema = z.enum(['owner', 'editor', 'member', 'viewer']);
+export const InviteRoleSchema = z.enum(['editor', 'member', 'viewer']);
+
+export const CreateInviteSchema = z.object({
+  role: InviteRoleSchema.default('member'),
+  expires_at: z.string().datetime().optional().nullable(),
+});
+
+export const AcceptInviteSchema = z.object({
+  user_id: UuidSchema,
+});
+
+export const ActivityQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
 
 export const RegisterSchema = z.object({
   username: z.string().min(3, '用户名至少3个字符').max(100),
@@ -206,3 +221,6 @@ export type CreateFamilyInput = z.infer<typeof CreateFamilySchema>;
 export type UpdateFamilyInput = z.infer<typeof UpdateFamilySchema>;
 export type DetermineSideQuery = z.infer<typeof DetermineSideQuerySchema>;
 export type CycleCheckInput = z.infer<typeof CycleCheckSchema>;
+export type CreateInviteInput = z.infer<typeof CreateInviteSchema>;
+export type AcceptInviteInput = z.infer<typeof AcceptInviteSchema>;
+export type ActivityQuery = z.infer<typeof ActivityQuerySchema>;

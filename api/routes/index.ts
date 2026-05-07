@@ -12,6 +12,7 @@ import searchRoutes from './searchRoutes';
 import sideRoutes from './sideRoutes';
 import titleRoutes from './titleRoutes';
 import uploadRoutes from './uploadRoutes';
+import collaborationRoutes from './collaborationRoutes';
 
 const router = Router();
 
@@ -24,5 +25,6 @@ router.use('/sides', sideRoutes);
 router.use('/search', searchRoutes);
 router.use('/import', importRoutes);
 router.use('/persons', uploadRoutes);
+router.use('/', collaborationRoutes);
 
 export default router;

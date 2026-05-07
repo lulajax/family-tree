@@ -7,3 +7,4 @@ export { TitleCalculationService, titleCalculationService } from './TitleCalcula
 export { SearchService, searchService } from './SearchService';
 export { ImportService, importService } from './ImportService';
 export { DualTreeService, dualTreeService } from './DualTreeService';
+export { FamilyCollaborationService, familyCollaborationService } from './FamilyCollaborationService';
