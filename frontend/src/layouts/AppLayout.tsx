@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { SearchBar } from '../components/search/SearchBar';
@@ -5,7 +6,11 @@ import { SearchBar } from '../components/search/SearchBar';
 export function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuthStore();
+  const { user, logout, hydrateCurrentUser } = useAuthStore();
+
+  useEffect(() => {
+    void hydrateCurrentUser();
+  }, [hydrateCurrentUser]);
 
   // Extract familyId from any nested route
   const familyId = location.pathname.match(/\/families\/([^/]+)/)?.[1];

@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { login as loginRequest, register as registerRequest } from './auth';
 import { apiClient } from './client';
 import type { Family, FamilyInvite, FamilyMembership, InviteRole, Person } from '../types';
 import { useAuthStore } from '../store/authStore';
@@ -154,11 +155,7 @@ export function useAcceptFamilyInvite() {
 export function useLogin() {
   const setAuth = useAuthStore((s) => s.setAuth);
   return useMutation({
-    mutationFn: (data: { username: string; password: string }) =>
-      apiClient<{ user: { id: string; username: string; display_name: string | null; role: string }; tokens: { access_token: string } }>('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
+    mutationFn: loginRequest,
     onSuccess: (result) => {
       setAuth(result.tokens.access_token, result.user);
     },
@@ -168,11 +165,7 @@ export function useLogin() {
 export function useRegister() {
   const setAuth = useAuthStore((s) => s.setAuth);
   return useMutation({
-    mutationFn: (data: { username: string; password: string; display_name?: string }) =>
-      apiClient<{ user: { id: string; username: string; display_name: string | null; role: string }; tokens: { access_token: string } }>('/auth/register', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
+    mutationFn: registerRequest,
     onSuccess: (result) => {
       setAuth(result.tokens.access_token, result.user);
     },
