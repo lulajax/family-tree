@@ -21,7 +21,7 @@ describe('useRelationshipExplanation', () => {
     mocks.apiClient.mockReset();
   });
 
-  it('queries the calculate explain endpoint with reference and target ids', async () => {
+  it('queries the person relationship-to endpoint with reference and target ids', async () => {
     mocks.useQuery.mockImplementation((config) => config);
 
     const config = useRelationshipExplanation('target-1', 'reference-1');
@@ -31,7 +31,7 @@ describe('useRelationshipExplanation', () => {
 
     await config.queryFn();
 
-    expect(mocks.apiClient).toHaveBeenCalledWith('/calculate/explain?from=reference-1&to=target-1');
+    expect(mocks.apiClient).toHaveBeenCalledWith('/persons/target-1/relationship-to?reference=reference-1');
   });
 
   it('disables the query when either id is missing or both ids are the same', () => {

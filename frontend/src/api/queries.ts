@@ -72,13 +72,8 @@ export function useRelationshipExplanation(
 ) {
   return useQuery({
     queryKey: ['relationshipExplanation', targetPersonId, referencePersonId],
-    queryFn: () => {
-      const params = new URLSearchParams({
-        from: referencePersonId ?? '',
-        to: targetPersonId ?? '',
-      });
-      return apiClient<RelationshipExplanation>(`/calculate/explain?${params.toString()}`);
-    },
+    queryFn: () =>
+      apiClient<RelationshipExplanation>(`/persons/${targetPersonId}/relationship-to?reference=${referencePersonId}`),
     enabled: !!targetPersonId && !!referencePersonId && targetPersonId !== referencePersonId,
   });
 }
