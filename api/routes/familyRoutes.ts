@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { familyService, dualTreeService } from '../services';
 import { validateBody, validateParams } from '../middleware';
+import { authenticateToken } from '../middleware/auth';
 import { successResponse, sendNotFoundError } from '../utils/response';
 import { CreateFamilySchema, UpdateFamilySchema, UuidSchema } from '../types/schemas';
 import { query } from '../config/database';
@@ -29,10 +30,11 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
 router.post(
   '/',
+  authenticateToken,
   validateBody(CreateFamilySchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const created_by = (req as Request & { user?: { id: string } }).user?.id || 'system';
+      const created_by = req.user?.sub || 'system';
       const family = await familyService.createFamily(
         req.body.name,
         req.body.description,

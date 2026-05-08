@@ -18,19 +18,34 @@ export class FamilyService {
     generation_name?: string,
     hall_name?: string,
   ): Promise<Family> {
-    const result = await query<Family>(
-      `
-        INSERT INTO families (
-          name, description, root_person_id, generation_name, hall_name,
-          created_at, updated_at, created_by
-        )
-        VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6)
-        RETURNING *
-      `,
-      [name, description ?? null, root_person_id ?? null, generation_name ?? null, hall_name ?? null, created_by]
-    );
+    return withTransaction(async (client) => {
+      const result = await client.query<Family>(
+        `
+          INSERT INTO families (
+            name, description, root_person_id, generation_name, hall_name,
+            created_at, updated_at, created_by
+          )
+          VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6)
+          RETURNING *
+        `,
+        [name, description ?? null, root_person_id ?? null, generation_name ?? null, hall_name ?? null, created_by]
+      );
 
-    return result.rows[0];
+      const family = result.rows[0];
+      if (created_by !== 'system') {
+        await client.query(
+          `
+            INSERT INTO family_memberships (family_id, user_id, role, invited_by)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (family_id, user_id)
+            DO UPDATE SET role = EXCLUDED.role
+          `,
+          [family.id, created_by, 'owner', null]
+        );
+      }
+
+      return family;
+    });
   }
 
   async listFamilies(
