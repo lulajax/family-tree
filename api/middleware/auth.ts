@@ -13,14 +13,19 @@ declare global {
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || '';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+function shouldSkipAuthInDevelopment(): boolean {
+  return !JWT_SECRET && !IS_PRODUCTION;
+}
 
 /**
  * JWT authentication middleware.
- * If JWT_SECRET is not configured, authentication is skipped (development mode).
+ * If JWT_SECRET is not configured, authentication is skipped only outside production.
  */
 export function authenticateToken(req: Request, _res: Response, next: NextFunction): void {
   // Skip auth if JWT_SECRET is not configured (dev mode)
-  if (!JWT_SECRET) {
+  if (shouldSkipAuthInDevelopment()) {
     return next();
   }
 
@@ -45,7 +50,7 @@ export function authenticateToken(req: Request, _res: Response, next: NextFuncti
  * but does not reject unauthenticated requests.
  */
 export function optionalAuth(req: Request, _res: Response, next: NextFunction): void {
-  if (!JWT_SECRET) {
+  if (shouldSkipAuthInDevelopment()) {
     return next();
   }
 
@@ -69,7 +74,7 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction): 
 export function requireRole(...roles: UserRole[]) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     // Skip role check if JWT_SECRET is not configured
-    if (!JWT_SECRET) {
+    if (shouldSkipAuthInDevelopment()) {
       return next();
     }
 
