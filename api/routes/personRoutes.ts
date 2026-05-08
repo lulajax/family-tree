@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { personService } from '../services';
+import { personService, titleCalculationService } from '../services';
 import { validateBody, validateParams } from '../middleware';
 import { successResponse, sendNotFoundError, sendValidationError } from '../utils/response';
 import { CreatePersonSchema, UpdatePersonSchema, UuidSchema } from '../types/schemas';
@@ -131,6 +131,25 @@ router.post('/:id/link-relative', async (req: Request, res: Response, next: Next
     const created_by = (req as Request & { user?: { id: string } }).user?.id || 'system';
     const result = await personService.linkExistingRelative(id, body.existing_person_id, body.relation_type, created_by);
     successResponse(res, result, 201);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/:id/relationship-to', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = z.object({ id: UuidSchema }).parse(req.params);
+    const { reference, as_of } = z.object({
+      reference: UuidSchema,
+      as_of: z.string().datetime().optional(),
+    }).parse(req.query);
+
+    const explanation = await titleCalculationService.calculateRelationshipExplanation(
+      reference,
+      id,
+      as_of
+    );
+    successResponse(res, explanation);
   } catch (error) {
     next(error);
   }

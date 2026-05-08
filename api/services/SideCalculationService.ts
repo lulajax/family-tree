@@ -37,7 +37,8 @@ export class SideCalculationService {
 
     const ancestor = await this.findCommonAncestor(reference_person_id, target_person_id);
     if (!ancestor) {
-      return 'unknown';
+      const inferredSide = await this.inferSideFromFirstParentEdge(reference_person_id, target_person_id);
+      return inferredSide ?? 'unknown';
     }
 
     const referenceAncestors = await this.getAncestorRows(reference_person_id);
@@ -181,6 +182,29 @@ export class SideCalculationService {
       results.set(target_person_id, side);
     }
     return results;
+  }
+
+  private async inferSideFromFirstParentEdge(
+    reference_person_id: string,
+    target_person_id: string
+  ): Promise<'paternal' | 'maternal' | null> {
+    const path = await this.getRelationshipPath(reference_person_id, target_person_id);
+    const firstStep = path[1];
+    if (!firstStep || firstStep.relation !== 'parent') {
+      return null;
+    }
+
+    const parent = await query<{ gender: string }>('SELECT gender FROM persons WHERE id = $1', [
+      firstStep.person_id,
+    ]);
+    const gender = parent.rows[0]?.gender;
+    if (gender === 'male') {
+      return 'paternal';
+    }
+    if (gender === 'female') {
+      return 'maternal';
+    }
+    return null;
   }
 
   private async getAncestorRows(person_id: string): Promise<AncestorRow[]> {
