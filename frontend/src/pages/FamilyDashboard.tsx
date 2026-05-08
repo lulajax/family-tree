@@ -1,17 +1,20 @@
 import { useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { useDualTree, useFamily } from '../api/queries';
+import { useDualTree, useFamily, useFamilyActivity, useFamilyCollaborationMembers } from '../api/queries';
 import { apiClient } from '../api/client';
+import { useCreateFamilyInvite } from '../api/mutations';
 import { DualFamilyTree } from '../components/tree/DualFamilyTree';
 import { PersonDetailPanel } from '../components/person/PersonDetailPanel';
 import { AddRelativeDialog } from '../components/person/AddRelativeDialog';
 import { FamilyHeader } from '../components/family/FamilyHeader';
+import { FamilyMembersPanel } from '../components/family/FamilyMembersPanel';
+import { InviteFamilyDialog } from '../components/family/InviteFamilyDialog';
 import { MobileTreeView } from '../components/mobile/MobileTreeView';
 import { BottomDrawer } from '../components/ui/BottomDrawer';
 import { QuickStartChecklist } from '../components/onboarding/QuickStartChecklist';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import type { PersonNode, DualTreeResponse, DescendantNode, CollateralFamily, Person } from '../types';
+import type { PersonNode, DualTreeResponse, DescendantNode, CollateralFamily, Person, InviteRole } from '../types';
 
 export function FamilyDashboard() {
   const { familyId } = useParams<{ familyId: string }>();
@@ -23,8 +26,15 @@ export function FamilyDashboard() {
   const [refHistory, setRefHistory] = useState<string[]>([]);
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const [addRelativeTarget, setAddRelativeTarget] = useState<PersonNode | null>(null);
+  const [showInviteDialog, setShowInviteDialog] = useState(false);
+  const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
+  const [latestInviteCode, setLatestInviteCode] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   const { data: family } = useFamily(familyId ?? null);
+  const { data: collaborationMembers = [], isLoading: isCollaborationLoading } = useFamilyCollaborationMembers(familyId ?? null);
+  const { data: familyActivity = [] } = useFamilyActivity(familyId ?? null, 20);
+  const createInvite = useCreateFamilyInvite();
 
   // Auto-set reference to root person when family loads
   const effectiveRefId = referencePersonId ?? family?.root_person_id ?? null;
@@ -106,6 +116,17 @@ export function FamilyDashboard() {
     queryClient.invalidateQueries({ queryKey: ['dualTree'] });
   }, [queryClient]);
 
+  const handleCreateInvite = useCallback(async (role: InviteRole) => {
+    if (!familyId) return;
+    setInviteError(null);
+    try {
+      const invite = await createInvite.mutateAsync({ familyId, role });
+      setLatestInviteCode(invite.invite_code);
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : '生成邀请失败');
+    }
+  }, [createInvite, familyId]);
+
   // If no family selected yet
   if (!familyId) {
     navigate('/');
@@ -124,7 +145,11 @@ export function FamilyDashboard() {
         {/* Family header (mobile) */}
         {family && (
           <div className="px-4 pt-3 pb-2 border-b border-gray-200 bg-white">
-            <FamilyHeader family={family} />
+            <FamilyHeader
+              family={family}
+              onInviteClick={() => setShowInviteDialog(true)}
+              onMembersClick={() => setShowCollaborationPanel((value) => !value)}
+            />
           </div>
         )}
 
@@ -149,6 +174,15 @@ export function FamilyDashboard() {
               onPersonClick={(p) => setSelectedPersonId(p.id)}
               onSetReference={handleSetReference}
             />
+            {showCollaborationPanel && (
+              <div className="mt-4">
+                <FamilyMembersPanel
+                  members={collaborationMembers}
+                  activity={familyActivity}
+                  isLoading={isCollaborationLoading}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -170,6 +204,17 @@ export function FamilyDashboard() {
             />
           )}
         </BottomDrawer>
+
+        {showInviteDialog && familyId && (
+          <InviteFamilyDialog
+            familyId={familyId}
+            inviteCode={latestInviteCode}
+            isCreating={createInvite.isPending}
+            error={inviteError}
+            onCreateInvite={handleCreateInvite}
+            onClose={() => setShowInviteDialog(false)}
+          />
+        )}
 
         {addRelativeTarget && (
           <AddRelativeDialog
@@ -201,7 +246,13 @@ export function FamilyDashboard() {
               <span>返回</span>
             </button>
           )}
-          {family && <FamilyHeader family={family} />}
+          {family && (
+            <FamilyHeader
+              family={family}
+              onInviteClick={() => setShowInviteDialog(true)}
+              onMembersClick={() => setShowCollaborationPanel((value) => !value)}
+            />
+          )}
         </div>
 
         {isLoading && (
@@ -230,8 +281,8 @@ export function FamilyDashboard() {
         )}
       </div>
 
-      {/* Detail panel (desktop) */}
-      {selectedNode && (
+      {/* Detail / collaboration panel (desktop) */}
+      {selectedNode ? (
         <div className="w-80 border-l border-gray-200 bg-white overflow-y-auto">
           <PersonDetailPanel
             person={selectedNode}
@@ -243,6 +294,25 @@ export function FamilyDashboard() {
             onEdit={handleEdit}
           />
         </div>
+      ) : showCollaborationPanel ? (
+        <aside className="w-80 border-l border-gray-200 bg-slate-50 p-4 overflow-y-auto">
+          <FamilyMembersPanel
+            members={collaborationMembers}
+            activity={familyActivity}
+            isLoading={isCollaborationLoading}
+          />
+        </aside>
+      ) : null}
+
+      {showInviteDialog && familyId && (
+        <InviteFamilyDialog
+          familyId={familyId}
+          inviteCode={latestInviteCode}
+          isCreating={createInvite.isPending}
+          error={inviteError}
+          onCreateInvite={handleCreateInvite}
+          onClose={() => setShowInviteDialog(false)}
+        />
       )}
 
       {/* Add relative dialog */}

@@ -1,6 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from './client';
-import type { Family, Person, DualTreeResponse, RelationshipExplanation } from '../types';
+import type {
+  AuditLog,
+  DualTreeResponse,
+  Family,
+  FamilyMembership,
+  Person,
+  RelationshipExplanation,
+} from '../types';
 
 // ── Search result types ──
 
@@ -83,6 +90,22 @@ export function useFamilyMembers(familyId: string | null, page = 1, limit = 50) 
     queryKey: ['familyMembers', familyId, page, limit],
     queryFn: () =>
       apiClient<Person[]>(`/persons?family_id=${familyId}&page=${page}&limit=${limit}`),
+    enabled: !!familyId,
+  });
+}
+
+export function useFamilyCollaborationMembers(familyId: string | null) {
+  return useQuery({
+    queryKey: ['collaborationMembers', familyId],
+    queryFn: () => apiClient<FamilyMembership[]>(`/families/${familyId}/collaboration/members`),
+    enabled: !!familyId,
+  });
+}
+
+export function useFamilyActivity(familyId: string | null, limit = 20) {
+  return useQuery({
+    queryKey: ['familyActivity', familyId, limit],
+    queryFn: () => apiClient<AuditLog[]>(`/families/${familyId}/activity?limit=${limit}`),
     enabled: !!familyId,
   });
 }

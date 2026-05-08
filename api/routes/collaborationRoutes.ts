@@ -10,7 +10,7 @@ function currentUserId(req: Request): string | null {
   return (req as Request & { user?: { id: string } }).user?.id ?? null;
 }
 
-router.get('/families/:familyId/members', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/families/:familyId/collaboration/members', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { familyId } = z.object({ familyId: UuidSchema }).parse(req.params);
     successResponse(res, await familyCollaborationService.listMembers(familyId));

@@ -117,6 +117,42 @@ export interface RelationshipExplanation {
   } | null;
 }
 
+export type CollaborationRole = 'owner' | 'editor' | 'member' | 'viewer';
+export type InviteRole = Exclude<CollaborationRole, 'owner'>;
+
+export interface FamilyMembership {
+  id: string;
+  family_id: string;
+  user_id: string;
+  role: CollaborationRole;
+  joined_at?: string;
+  invited_by?: string | null;
+}
+
+export interface FamilyInvite {
+  id: string;
+  family_id: string;
+  invite_code: string;
+  role: InviteRole;
+  expires_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  accepted_by: string | null;
+  accepted_at: string | null;
+}
+
+export interface AuditLog {
+  id: string;
+  family_id: string | null;
+  actor_user_id: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  created_at: string;
+}
+
 // ── D3 可视化用 ──
 
 export interface TreeNodeD3 {

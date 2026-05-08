@@ -13,7 +13,11 @@ vi.mock('./client', () => ({
   apiClient: mocks.apiClient,
 }));
 
-import { useRelationshipExplanation } from './queries';
+import {
+  useFamilyActivity,
+  useFamilyCollaborationMembers,
+  useRelationshipExplanation,
+} from './queries';
 
 describe('useRelationshipExplanation', () => {
   beforeEach(() => {
@@ -40,5 +44,38 @@ describe('useRelationshipExplanation', () => {
     expect(useRelationshipExplanation(null, 'reference-1').enabled).toBe(false);
     expect(useRelationshipExplanation('target-1', null).enabled).toBe(false);
     expect(useRelationshipExplanation('same-1', 'same-1').enabled).toBe(false);
+  });
+});
+
+describe('collaboration queries', () => {
+  beforeEach(() => {
+    mocks.useQuery.mockReset();
+    mocks.apiClient.mockReset();
+  });
+
+  it('queries family collaboration members by family id', async () => {
+    mocks.useQuery.mockImplementation((config) => config);
+
+    const config = useFamilyCollaborationMembers('family-1');
+
+    expect(config.queryKey).toEqual(['collaborationMembers', 'family-1']);
+    expect(config.enabled).toBe(true);
+
+    await config.queryFn();
+
+    expect(mocks.apiClient).toHaveBeenCalledWith('/families/family-1/collaboration/members');
+  });
+
+  it('queries family activity with a bounded limit', async () => {
+    mocks.useQuery.mockImplementation((config) => config);
+
+    const config = useFamilyActivity('family-1', 20);
+
+    expect(config.queryKey).toEqual(['familyActivity', 'family-1', 20]);
+    expect(config.enabled).toBe(true);
+
+    await config.queryFn();
+
+    expect(mocks.apiClient).toHaveBeenCalledWith('/families/family-1/activity?limit=20');
   });
 });

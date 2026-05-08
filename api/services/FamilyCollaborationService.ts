@@ -70,7 +70,12 @@ export class FamilyCollaborationService {
       `,
       [family_id, inviteCode, role, expiresAt, created_by]
     );
-    return result.rows[0];
+    const invite = result.rows[0];
+    await this.logAudit(family_id, created_by, 'create_invite', 'family_invite', invite.id, null, {
+      role: invite.role,
+      expires_at: invite.expires_at,
+    });
+    return invite;
   }
 
   async acceptInvite(invite_code: string, user_id: string): Promise<FamilyMembership> {
@@ -113,7 +118,13 @@ export class FamilyCollaborationService {
       [user_id, invite.id]
     );
 
-    return membershipResult.rows[0];
+    const membership = membershipResult.rows[0];
+    await this.logAudit(invite.family_id, user_id, 'accept_invite', 'family_membership', membership.id, null, {
+      role: membership.role,
+      invite_id: invite.id,
+    });
+
+    return membership;
   }
 
   async listActivity(family_id: string, limit = 50): Promise<AuditLog[]> {
@@ -128,6 +139,24 @@ export class FamilyCollaborationService {
       [family_id, limit]
     );
     return result.rows;
+  }
+
+  private async logAudit(
+    family_id: string,
+    actor_user_id: string | null,
+    action: string,
+    entity_type: string,
+    entity_id: string | null,
+    before: Record<string, unknown> | null,
+    after: Record<string, unknown> | null
+  ): Promise<void> {
+    await query(
+      `
+        INSERT INTO audit_logs (family_id, actor_user_id, action, entity_type, entity_id, before, after)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [family_id, actor_user_id, action, entity_type, entity_id, before, after]
+    );
   }
 }
 

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from './client';
-import type { Family, Person } from '../types';
+import type { Family, FamilyInvite, FamilyMembership, InviteRole, Person } from '../types';
 import { useAuthStore } from '../store/authStore';
 
 // ── Family mutations ──
@@ -114,6 +114,37 @@ export function useUploadPhoto() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['dualTree'] });
       qc.invalidateQueries({ queryKey: ['person'] });
+    },
+  });
+}
+
+// ── Collaboration mutations ──
+
+export function useCreateFamilyInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ familyId, role, expires_at }: { familyId: string; role?: InviteRole; expires_at?: string | null }) =>
+      apiClient<FamilyInvite>(`/families/${familyId}/invites`, {
+        method: 'POST',
+        body: JSON.stringify({ role: role ?? 'member', expires_at: expires_at ?? null }),
+      }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['familyActivity', vars.familyId] });
+    },
+  });
+}
+
+export function useAcceptFamilyInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ inviteCode, user_id }: { inviteCode: string; user_id: string }) =>
+      apiClient<FamilyMembership>(`/invites/${inviteCode}/accept`, {
+        method: 'POST',
+        body: JSON.stringify({ user_id }),
+      }),
+    onSuccess: (membership) => {
+      qc.invalidateQueries({ queryKey: ['collaborationMembers', membership.family_id] });
+      qc.invalidateQueries({ queryKey: ['familyActivity', membership.family_id] });
     },
   });
 }
