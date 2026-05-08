@@ -153,6 +153,27 @@ export interface AuditLog {
   created_at: string;
 }
 
+export type UserRole = 'user' | 'admin';
+
+export interface User {
+  id: string;
+  username: string;
+  display_name: string;
+  role: UserRole;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuthTokens {
+  access_token: string;
+  expires_in: number;
+}
+
+export interface AuthResult {
+  user: User;
+  tokens: AuthTokens;
+}
+
 // ── D3 可视化用 ──
 
 export interface TreeNodeD3 {
